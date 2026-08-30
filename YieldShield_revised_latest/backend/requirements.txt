@@ -1,0 +1,29 @@
+psycopg2-binary>=2.9
+openpyxl>=3.1
+httpx>=0.27
+
+# --- ML model serving (app/ml/) ---
+xgboost>=2.0
+numpy>=1.26
+
+# --- API layer ---
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pydantic[email]>=2.7
+
+# --- Auth ---
+# bcrypt is pinned <4.1: passlib 1.7's version probe reads
+# bcrypt.__about__.__version__, which bcrypt>=4.1 removed. Without this pin,
+# pip installs latest bcrypt and passlib logs "(trapped) error reading
+# bcrypt version" on every startup / password check.
+passlib[bcrypt]>=1.7
+bcrypt>=4.0,<4.1
+pyjwt>=2.8
+
+# --- Web Push (device notifications) ---
+# Free, browser-native — no paid service or API key. See
+# scripts/04_generate_vapid_keys.py.
+pywebpush>=2.0
+
+# --- Dev convenience (load .env automatically) ---
+python-dotenv>=1.0

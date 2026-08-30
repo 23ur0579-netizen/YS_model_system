@@ -1,0 +1,2 @@
+"crop_type","barangay","soil_type","season_type","rainfall","avg_temp","min_temp","max_temp","humidity","surface_pressure","solar_rad","land_size_ha","total_area_planted_ha","irrigated_area_ha","rainfed_area_ha","irrigated_ratio","rainfed_ratio","temperature_range","heat_stress_index","humidity_temp","solar_temp","water_availability","predicted_yield_mt_ha"
+"Palay","San Pablo","Silty Clay Loam","WS",12.5,26.8,21.3,32.6,82.5,98.4,17.6,250,55,35,20,0.636363636363636,0.363636363636364,11.3,22.11,2211,471.68,71.5909090909091,3.628

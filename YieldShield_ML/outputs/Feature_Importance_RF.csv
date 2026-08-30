@@ -1,0 +1,45 @@
+"feature","importance"
+"temperature_range",100
+"rainfed_ratio",72.364479562897
+"irrigated_ratio",71.4407048699554
+"soil_type.Silty Clay Loam",56.919937487868
+"min_temp",55.7306569996076
+"avg_temp",55.5047952172046
+"water_availability",50.6681207550302
+"max_temp",50.3699804054659
+"irrigated_area_ha",50.3192987848879
+"rainfed_area_ha",50.1833594743702
+"total_area_planted_ha",50.1625470797051
+"humidity",46.559692760046
+"rainfall",44.2890932096909
+"solar_temp",44.1944939533812
+"season_type.WS",43.9035459271724
+"barangay.Linmansangan",42.4574894973923
+"barangay.Cili",41.8272190286713
+"land_size_ha",39.5120768095814
+"heat_stress_index",37.0463158101001
+"humidity_temp",35.993464549961
+"solar_rad",35.775719807141
+"surface_pressure",31.3440571835712
+"soil_type.Sandy Loam",30.3459351279235
+"barangay.San Pablo",30.2819304353968
+"crop_type.Palay",29.2033338284547
+"barangay.Pasileng Norte",27.0583102119446
+"barangay.Bued",20.3596337823222
+"barangay.Capas",17.5814721858619
+"barangay.Vacante",14.3396917806145
+"barangay.Mangkasuy",13.5472734341714
+"barangay.Tabuyoc",12.3207664738039
+"barangay.Moreno",11.4733405755588
+"barangay.Santiago",11.201731850091
+"barangay.Bugayong",9.02324533132515
+"soil_type.Sandy Loam / Silty Clay Loam",8.84539401592383
+"barangay.Sta. Catalina",7.0490636737787
+"barangay.Sta. Maria Norte",4.1019660964619
+"barangay.Sumabnit",3.907088363275
+"barangay.San Felipe Central",3.70263515048389
+"soil_type.Silty Clay Loam / Fine Sandy Loam",3.30254716278078
+"barangay.Dumayat",3.26535420697533
+"barangay.Camanggaan",3.19757867831307
+"barangay.San Felipe Sur",2.48612841971547
+"barangay.Pasileng Sur",0
