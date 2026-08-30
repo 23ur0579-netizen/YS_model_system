@@ -79,7 +79,7 @@ export type Prediction = {
   technique?: string;
   spacing?: number;   // crop distance / plant spacing in cm
   seedRate?: number;  // seeding / transplanting rate (kg or seedlings per ha)
-  // Optional classification the official Planting Status / Area
+  // Optional classification the official Area Planted / Area
   // Harvested municipal reports group by — see AdminFarms.tsx's
   // Reports panel and backend/app/reports.py.
   ecosystem?: "Irrigated" | "Rainfed";
@@ -329,7 +329,17 @@ export function keyToLabel(key: string): string {
   return BARANGAY_KEY_TO_BACKEND_LABEL[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 export function labelToKey(label: string): string {
-  return BACKEND_LABEL_TO_BARANGAY_KEY[label] ?? label.replace(/\s+/g, "");
+  // NFC-normalize first: "Santo Niño" can arrive from the backend with
+  // "ñ" as either one composed codepoint or "n" + a separate combining-
+  // tilde mark — visually identical, byte-for-byte different, and a
+  // plain JS string/object-key comparison treats them as unequal. Bit
+  // for bit this is the exact same failure mode the seed script's
+  // load_barangays() just hit and got fixed for — normalizing here
+  // means it can't quietly resurface in the live app for any barangay
+  // with an accented name, regardless of which form a migration, an
+  // editor, or Postgres itself happened to store it in.
+  const normalized = label.normalize("NFC");
+  return BACKEND_LABEL_TO_BARANGAY_KEY[normalized] ?? normalized.replace(/\s+/g, "");
 }
 
 function apiFarmToPrediction(f: api.ApiFarm): Prediction {

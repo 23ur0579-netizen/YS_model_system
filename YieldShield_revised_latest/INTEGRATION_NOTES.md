@@ -1024,3 +1024,85 @@ matching data yet, a note says so directly instead of silently
 leaving a default that won't work either.
 
 `python -m py_compile` / `tsc --noEmit` both clean after these changes.
+
+---
+
+## Seed distribution schedules now notify farmers and post an announcement (this session)
+
+Creating a seed distribution schedule previously only wrote the
+`seed_distribution` row and an audit log entry — nothing told any
+farmer it existed. Added both notification paths rather than picking
+one, since they serve different audiences:
+
+- **A personal notification** (category `task`, same as the "Care
+  schedule updated" notice from earlier) to every farmer registered in
+  the target barangay specifically — they're the ones who actually
+  need to know to show up on the scheduled date. Also sent as a push
+  notification, same pattern as `farm_input.py`'s pending-pushes list
+  (collected during the transaction, sent after it commits).
+- **A municipality-wide announcement**, tagged `schedule` (an existing
+  tag the frontend already fully supports — no frontend changes needed
+  at all), authored under the creating coordinator's real name, same
+  as a manually-posted announcement. This stays visible in the general
+  Announcements feed afterward, and reaches anyone interested even if
+  their own barangay registration happens to be off.
+
+Scoped to creation only, not edits to an existing schedule (changing
+the date/quantity/status of an already-announced distribution doesn't
+re-notify) — that's a reasonable follow-up if wanted, not implemented
+here since it wasn't asked for.
+
+`_notify` is duplicated into `seed_distribution.py` rather than
+imported from `farm_input.py`, matching how `_resolve_barangay_and_crop`
+is already duplicated the same way between the two routers.
+
+`python -m py_compile` clean after these changes.
+
+---
+
+## Full-system audit — no new functional bugs found; cleaned up stale documentation (this session)
+
+Went through the system deliberately looking for problems rather than
+just reviewing the last change, checking:
+
+- **Compile checks** — `py_compile` across every backend file (including
+  `app/ml/`) and the seed script, `tsc --noEmit` across the whole
+  frontend. All clean.
+- **Migration consistency** — file numbering (01-24, no gaps/dupes),
+  and specifically whether newly-added tables (`seed_distribution`,
+  `crop_variety`) have RLS set up consistently with how the rest of the
+  schema does it. `crop_variety` deliberately has no RLS at all — this
+  matches `barangay`/`crop_type`/`planting_technique`, the other
+  read-only reference tables, none of which have RLS either. Not an
+  oversight.
+- **RLS actually permitting the new notify-on-schedule feature** — the
+  seed distribution notification writes a `notification` row for a
+  *different* user (the farmer) than the one making the request (the
+  coordinator). Checked the actual policy rather than assuming: it's
+  `current_app_role() = 'Admin' OR user_id = current_app_user_id()`,
+  and every caller of that endpoint is guaranteed `role = 'Admin'` by
+  `require_admin_role()` before it can even run — so this was already
+  correctly permitted, not something that needed a policy change.
+- **`generate_activities()`'s crop-scoping** — confirmed the
+  palay-only "is this transplanted?" check is nested inside `if crop
+  == "Palay (Rice)"` and can't accidentally apply to corn regardless
+  of what a corn technique's name happens to contain.
+- **Barangay-key handling across every file that touches it** —
+  `ManageUsers.tsx`, `Profile.tsx`, `Login.tsx`'s registration flow,
+  `SeedDistribution.tsx` — all correctly round-trip through
+  `keyToLabel`/`labelToKey` at the API boundary. No further instances
+  of the bug fixed a few sessions back.
+- **A real portability bug caught before it shipped**: the new seed-
+  distribution notification used `strftime("%B %-d, %Y")` —
+  `%-d` (no leading zero) is a Linux-only strftime extension that
+  raises `ValueError` on Windows. Fixed to a portable f-string
+  construction before this was ever reported, not after.
+
+**Found and fixed: 6 stale comments** (across `AdminFarms.tsx`,
+`store.tsx`, `api.ts` x2, `schemas.py` x2) still calling the Area
+Planted report "Planting Status" — its name from before that rename
+a few sessions back. No functional effect (comments only), but
+misleading for anyone reading the code afterward, including a future
+session of this same work.
+
+No other functional bugs found in this pass.

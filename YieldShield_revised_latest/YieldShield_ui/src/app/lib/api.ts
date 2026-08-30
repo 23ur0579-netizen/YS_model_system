@@ -103,7 +103,7 @@ export type FarmInputPayload = {
   technique?: string | null;
   spacing?: number | null;
   seed_rate?: number | null;
-  // Feeds the official Planting Status / Area Harvested municipal
+  // Feeds the official Area Planted / Area Harvested municipal
   // reports (backend/app/reports.py) — optional, not every farmer
   // will specify these.
   ecosystem?: "Irrigated" | "Rainfed" | null;
@@ -575,7 +575,7 @@ export function unsubscribePush(endpoint: string) {
 }
 
 // ---------------------------------------------------------------------
-// Reports (Planting Status / Area Harvested .xlsx downloads) — backs
+// Reports (Area Planted / Area Harvested .xlsx downloads) — backs
 // AdminFarms.tsx's Reports panel. These return a binary file, not JSON,
 // so they can't go through request() above; this fetches the same way
 // (auth header, same error-message parsing) but triggers a browser

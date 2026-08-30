@@ -97,7 +97,7 @@ class FarmInputRequest(BaseModel):
     technique: str | None = Field(None, max_length=120)
     spacing: float | None = Field(None, gt=0, description="Crop distance / spacing in cm")
     seed_rate: float | None = Field(None, ge=0, description="Seeding/seedling rate, kg or seedlings per ha")
-    # Feeds the official Planting Status / Area Harvested municipal
+    # Feeds the official Area Planted / Area Harvested municipal
     # reports (reports.py) — optional, since not every farmer will know
     # or care to specify these.
     ecosystem: str | None = Field(None, pattern="^(Irrigated|Rainfed)$")
@@ -215,7 +215,7 @@ class FarmOut(BaseModel):
     technique: str | None = None
     spacing: float | None = None
     seedRate: float | None = None
-    # Classification the official Planting Status / Area Harvested
+    # Classification the official Area Planted / Area Harvested
     # municipal reports group by — see reports.py. None on older rows,
     # or where the farmer didn't specify.
     ecosystem: str | None = None

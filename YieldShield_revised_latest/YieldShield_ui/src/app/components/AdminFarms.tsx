@@ -377,7 +377,7 @@ export function AdminFarms() {
 }
 
 // Downloads the two official Municipal Agriculture Office reports —
-// Planting Status, and Area Harvested by Ecosystem/Seed Type — as real
+// Area Planted, and Area Harvested by Ecosystem/Seed Type — as real
 // .xlsx files matching the office's own existing templates. See
 // backend/app/reports.py for how each workbook is actually built.
 function ReportsModal({ onClose }: { onClose: () => void }) {
