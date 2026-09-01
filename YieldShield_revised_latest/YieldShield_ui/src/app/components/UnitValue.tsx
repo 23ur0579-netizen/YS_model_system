@@ -16,19 +16,28 @@ import {
 function UnitSelect<U extends string>({
   value, options, onChange, tone,
 }: { value: U; options: U[]; onChange: (u: U) => void; tone?: "light" }) {
+  // appearance-none strips the native dropdown arrow with nothing to
+  // replace it, so these looked like plain text — nothing suggested a
+  // farmer could click "t/ha" to switch units at all. The ⏷ here is a
+  // second, always-visible element next to the (still fully functional,
+  // just visually blended-in) <select> itself, specifically so every
+  // unit-conversion control in the app reads the same way at a glance.
   return (
-    <select
-      value={value}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => { e.stopPropagation(); onChange(e.target.value as U); }}
-      className={`text-xs bg-transparent border-none outline-none cursor-pointer appearance-none pr-0 ${
-        tone === "light" ? "text-emerald-100/80" : "text-slate-400"
-      } hover:opacity-80`}
-    >
-      {options.map((o) => (
-        <option key={o} value={o} className="text-slate-800">{o}</option>
-      ))}
-    </select>
+    <span className="inline-flex items-center gap-0.5">
+      <select
+        value={value}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => { e.stopPropagation(); onChange(e.target.value as U); }}
+        className={`text-xs bg-transparent border-none outline-none cursor-pointer appearance-none pr-0 ${
+          tone === "light" ? "text-emerald-100/80" : "text-slate-400"
+        } hover:opacity-80`}
+      >
+        {options.map((o) => (
+          <option key={o} value={o} className="text-slate-800">{o}</option>
+        ))}
+      </select>
+      <span className={`text-[10px] leading-none select-none ${tone === "light" ? "text-emerald-100/80" : "text-slate-400"}`} aria-hidden="true">⏷</span>
+    </span>
   );
 }
 

@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState, ReactNode } from "react";
-import { Tractor, MapPin, Layers, TrendingUp, Leaf, CheckCircle2, Clock, Plus, FlaskConical, Droplets, ThermometerSun, CloudRain, Wheat, Loader2, BookOpen, Pencil, Sparkles, AlertTriangle, ChevronDown, Download, CalendarClock, X, Ruler, Trash2, LandPlot, Sprout, PlayCircle, Package } from "lucide-react";
+import { Tractor, MapPin, Layers, TrendingUp, Leaf, CheckCircle2, Clock, Plus, FlaskConical, Droplets, ThermometerSun, CloudRain, Wheat, Loader2, BookOpen, Pencil, Sparkles, AlertTriangle, ChevronDown, Download, CalendarClock, X, Ruler, Trash2, LandPlot, Sprout, PlayCircle, Package, Info, Copy } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { useStore, Prediction, Field, plantingWindow, predictYield, adminCrop } from "../store";
+import { useStore, Prediction, Field, plantingWindow, predictYield, adminCrop, remainingFieldArea } from "../store";
 import { BARANGAY_FACTS, BARANGAY_DATA, getPlantingTechniques, seasonForMonth, techniqueLabel } from "../data/binalonan";
 import { toast } from "sonner";
 import { useT } from "../i18n";
 import * as api from "../lib/api";
 import { FieldMapPlotter } from "./FieldMapPlotter";
+import { FieldLocationMap } from "./FieldLocationMap";
 import { WeekPlan } from "./WeekPlan";
 import { formatYieldValue, toTonnesPerHa, YieldUnit, YIELD_UNITS } from "../lib/units";
+import { polygonAreaHa } from "../lib/geo";
 import { YieldValue, AreaValue, SeedRateValue } from "./UnitValue";
 import { StatCard as SummaryCard } from "./StatCard";
 import { SearchableSelect, SearchableOption } from "./SearchableSelect";
@@ -509,10 +511,11 @@ function HarvestPanel({ p }: { p: Prediction }) {
               <select
                 value={unit}
                 onChange={(e) => changeUnit(e.target.value as YieldUnit)}
-                className="text-xs bg-transparent border-none outline-none cursor-pointer -mx-0.5"
+                className="text-xs bg-transparent border-none outline-none cursor-pointer appearance-none -mx-0.5"
               >
                 {YIELD_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
               </select>
+              <span className="text-[10px] leading-none select-none text-slate-400 -ml-1" aria-hidden="true">⏷</span>
               )
             </div>
             <input
@@ -875,7 +878,7 @@ function croppingToForm(p: Prediction): ReturnType<typeof blankCropping> {
 
 // ── Add / Simulate / Edit Cropping modal ─────────────────────────────────
 export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { field: Field; mode: "add" | "simulate" | "edit"; existing?: Prediction; onClose: () => void; onBehalf?: OnBehalf }) {
-  const { user, addPrediction, updatePrediction, logAudit, cropVarieties } = useStore();
+  const { user, predictions, addPrediction, updatePrediction, logAudit, cropVarieties } = useStore();
   const t = useT();
   // A Corn/Palay-assigned admin can only file croppings for their own
   // crop — same privilege that scopes what they see in AdminFarms.tsx.
@@ -896,6 +899,19 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
   const [weatherSource, setWeatherSource] = useState<"forecast" | "historical" | "climatology_average" | null>(null);
   const isSimulate = mode === "simulate";
   const isEdit = mode === "edit";
+
+  // How much of this field isn't already committed to another still-
+  // growing cropping. A harvested cropping's land is free again for the
+  // next planting, so only croppings with no recorded actual yield yet
+  // count as "occupying" space. Editing an existing cropping excludes
+  // that cropping's own current area from the total (otherwise it would
+  // count against itself and the field would look smaller than it is
+  // every time you open Edit). Simulation never actually claims any
+  // field area, so it isn't capped by this at all.
+  const remainingArea = useMemo(() => {
+    if (isSimulate) return field.area;
+    return remainingFieldArea(field, predictions, existing?.id);
+  }, [predictions, field, existing?.id, isSimulate]);
 
   // Live weather for the chosen planting date (soil pH/moisture stay the
   // static per-barangay defaults set in blankCropping — see data/binalonan.ts
@@ -1017,6 +1033,19 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
   }, [form.seedSource, form.seedType, form.crop, form.variety, cropVarieties]);
 
   const selectedCatalogVariety = form.seedSource === "da" ? cropVarieties.find((v) => v.crop === form.crop && v.name === form.variety) : undefined;
+  // Same mismatch check score() applies to the yield number itself (see
+  // store.tsx) — surfaced here so a lower-than-expected estimate has a
+  // visible reason attached instead of just quietly coming out lower.
+  const ecosystemMismatch = useMemo(() => {
+    if (!selectedCatalogVariety?.recommendedEcosystem || !form.ecosystem) return false;
+    const rec = selectedCatalogVariety.recommendedEcosystem;
+    const recommendsIrrigated = /irrigated/i.test(rec);
+    const recommendsRainfed = /rainfed/i.test(rec);
+    return (
+      (form.ecosystem === "Rainfed" && recommendsIrrigated && !recommendsRainfed) ||
+      (form.ecosystem === "Irrigated" && recommendsRainfed && !recommendsIrrigated)
+    );
+  }, [selectedCatalogVariety, form.ecosystem]);
   // Final-product preview: the curated list's hand-written description
   // when picking own-seed, or a plainer category/grain-derived line for
   // a DA catalog pick — the catalog's grain_type is coarse (just "Long"
@@ -1048,6 +1077,8 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
     technique: form.technique || undefined,
     spacing: parseFloat(form.spacing) || undefined,
     varietyAvgYieldTHa: selectedCatalogVariety?.averageYieldTHa ?? undefined,
+    ecosystem: form.ecosystem || undefined,
+    varietyRecommendedEcosystem: selectedCatalogVariety?.recommendedEcosystem ?? undefined,
   }), [form, selectedCatalogVariety]);
 
   function buildPayload() {
@@ -1087,14 +1118,37 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
     if (!form.plotId.trim()) { toast.error(t("farm.errCroppingId")); return; }
     const area = parseFloat(form.area);
     if (!area || area <= 0) { toast.error(t("farm.errArea")); return; }
-    if (area > field.area) { toast.error(t("farm.errAreaExceedsField")); return; }
+    // Checked against remainingArea, not field.area — a field already
+    // fully claimed by another still-growing cropping has zero space
+    // left for a new one regardless of the field's own total size.
+    if (!isSimulate && area > remainingArea) {
+      toast.error(
+        remainingArea <= 0
+          ? `${field.name} has no free area left — it's fully planted with a still-growing cropping.`
+          : `Only ${remainingArea.toFixed(1)} ha is still free on ${field.name}.`
+      );
+      return;
+    }
     setSaving(true);
     setTimeout(() => {
       if (isEdit && existing) {
-        const pred = updatePrediction(existing.id, buildPayload());
-        setSaving(false);
-        toast.success(`${t("farm.croppingUpdatedToast")} ${pred?.plotId ?? form.plotId} — ${pred ? pred.predictedYield.toFixed(2) : ""} t/ha ${t("farm.predictedSuffix")}.`);
-        onClose();
+        // Awaited, not fire-and-forget: closing the modal and showing
+        // success before the server actually confirmed the save meant
+        // a real failure looked identical to success until the next
+        // reload silently revealed the edit was never persisted. Now
+        // the modal stays open and shows a real, hard-to-miss error
+        // instead, with the on-screen values rolled back to match
+        // what's actually saved (see store.tsx's updatePrediction).
+        updatePrediction(existing.id, buildPayload())
+          .then((pred) => {
+            setSaving(false);
+            toast.success(`${t("farm.croppingUpdatedToast")} ${pred?.plotId ?? form.plotId} — ${pred ? pred.predictedYield.toFixed(2) : ""} t/ha ${t("farm.predictedSuffix")}.`);
+            onClose();
+          })
+          .catch(() => {
+            setSaving(false);
+            toast.error("Couldn't save your changes — the server didn't confirm the edit. Please check your connection and try again.");
+          });
         return;
       }
       const pred = addPrediction(buildPayload());
@@ -1166,6 +1220,15 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
                 </div>
               </div>
             </div>
+            {!isSimulate && (
+              <div className="text-xs text-slate-400 -mt-3 px-1">
+                A quick estimate that updates as you type. The number actually saved comes from the official
+                municipal yield model, which scores by barangay, crop, and planting month only — it can come out
+                a bit different, and won't move at all for ecosystem, seed source, variety, or technique changes
+                (that model doesn't factor those in yet), or for a planting date change that stays within the
+                same calendar month as before.
+              </div>
+            )}
             {isSimulate && (
               <div className="text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2 flex items-center gap-2">
                 <PlayCircle className="h-3.5 w-3.5 shrink-0" /> {t("farm.simulateHint")}
@@ -1279,6 +1342,15 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
                   {selectedCatalogVariety.droughtTolerance && <span>{selectedCatalogVariety.droughtTolerance} drought tolerance</span>}
                 </div>
               )}
+              {ecosystemMismatch && (
+                <div className="text-xs text-amber-700 mt-1.5 flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    {form.variety} is recommended for {selectedCatalogVariety?.recommendedEcosystem}, but this
+                    cropping is set to {form.ecosystem} — yield here may run a bit below the {selectedCatalogVariety?.averageYieldTHa} t/ha average.
+                  </span>
+                </div>
+              )}
             </label>
 
             {/* Planting technique */}
@@ -1322,18 +1394,21 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
                   type="number"
                   step="0.1"
                   min="0"
-                  max={field.area}
+                  max={remainingArea}
                   value={form.area}
                   onChange={(e) => {
                     const v = e.target.value;
-                    // Cropped area can never exceed the field's total size —
-                    // clamp rather than just validate on submit, so the
-                    // farmer sees the cap immediately as they type.
-                    if (v === "" || parseFloat(v) <= field.area) set("area", v);
-                    else set("area", String(field.area));
+                    // Cropped area can never exceed what's actually still
+                    // free on this field — other still-growing croppings
+                    // already claim the rest of it — clamp rather than
+                    // just validate on submit, so the farmer sees the cap
+                    // immediately as they type.
+                    if (v === "" || parseFloat(v) <= remainingArea) set("area", v);
+                    else set("area", String(remainingArea));
                   }}
-                  placeholder={`max ${field.area} ha`}
-                  className={inputCls}
+                  disabled={!isSimulate && remainingArea <= 0}
+                  placeholder={`max ${remainingArea} ha`}
+                  className={`${inputCls} ${!isSimulate && remainingArea <= 0 ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
                 />
               </label>
               <label className="block">
@@ -1341,6 +1416,22 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
                 <input type="number" step="1" min="0" value={form.spacing} onChange={(e) => set("spacing", e.target.value)} placeholder={form.crop === "Corn" ? "e.g. 25" : "e.g. 20"} className={inputCls} />
               </label>
             </div>
+            {!isSimulate && (
+              remainingArea <= 0 ? (
+                <div className="-mt-1 flex items-start gap-2 text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    {field.name}'s entire {field.area} ha is already planted with a still-growing cropping — there's
+                    no room left for another one here until some of it is harvested.
+                  </span>
+                </div>
+              ) : (
+                <div className="-mt-1 text-xs text-slate-400">
+                  {remainingArea.toFixed(1)} of {field.area} ha still free on {field.name}
+                  {remainingArea < field.area ? " — the rest is already planted with a still-growing cropping." : "."}
+                </div>
+              )
+            )}
 
             {/* Soil & climate */}
             <div>
@@ -1375,46 +1466,57 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
             {/* Seed quantity + rate — auto-computed from area × the
                 standard rate for this crop/technique by default, so it
                 can't drift from that formula unless the farmer
-                specifically asks to set it themselves. */}
+                specifically asks to set it themselves. Unit is always
+                kg (not user-selectable), so it's shown as an inline
+                suffix inside each field rather than a third,
+                permanently-disabled box sitting awkwardly between two
+                active ones. */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <div className="text-sm text-slate-700">{t("farm.seedQtyAuto")}</div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400">{form.seedRateCustom ? "Custom" : "Auto-calculated"}</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.seedRateCustom}
-                    onClick={() => setForm((f) => ({ ...f, seedRateCustom: !f.seedRateCustom }))}
-                    className={`relative h-5 w-9 rounded-full transition-colors shrink-0 ${form.seedRateCustom ? "bg-emerald-500" : "bg-slate-200"}`}
-                  >
-                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.seedRateCustom ? "translate-x-4" : "translate-x-0.5"}`} />
-                  </button>
-                </div>
+                <div className="text-sm text-slate-700">{t("farm.seedQty")}</div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.seedRateCustom}
+                  onClick={() => setForm((f) => ({ ...f, seedRateCustom: !f.seedRateCustom }))}
+                  className={`flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-full border transition-colors ${
+                    form.seedRateCustom ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"
+                  }`}
+                >
+                  <span className={`text-xs ${form.seedRateCustom ? "text-emerald-700" : "text-slate-500"}`}>
+                    {form.seedRateCustom ? "Custom" : "Auto-calculated"}
+                  </span>
+                  <span className={`relative inline-block h-5 w-9 rounded-full transition-colors shrink-0 ${form.seedRateCustom ? "bg-emerald-500" : "bg-slate-300"}`}>
+                    <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${form.seedRateCustom ? "translate-x-4" : "translate-x-0"}`} />
+                  </span>
+                </button>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <input
-                    value={form.quantity}
-                    onChange={(e) => set("quantity", e.target.value)}
-                    disabled={!form.seedRateCustom}
-                    readOnly={!form.seedRateCustom}
-                    className={`${inputCls} ${!form.seedRateCustom ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
-                  />
-                </label>
-                <label className="block">
-                  <div className="text-xs text-slate-400 mb-1">{t("farm.unit")}</div>
-                  <input value="kg" disabled readOnly className={`${inputCls} bg-slate-50 text-slate-500 cursor-not-allowed`} />
+                  <div className="text-xs text-slate-400 mb-1">{t("farm.quantityWord")}</div>
+                  <div className={`flex items-center h-10 rounded-lg border overflow-hidden focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100 ${!form.seedRateCustom ? "bg-slate-50 border-slate-200" : "border-slate-200"}`}>
+                    <input
+                      value={form.quantity}
+                      onChange={(e) => set("quantity", e.target.value)}
+                      disabled={!form.seedRateCustom}
+                      readOnly={!form.seedRateCustom}
+                      className={`min-w-0 flex-1 h-full pl-3 pr-1 bg-transparent border-0 outline-none text-sm ${!form.seedRateCustom ? "text-slate-500 cursor-not-allowed" : "text-slate-900"}`}
+                    />
+                    <span className="pr-3 text-sm text-slate-400 shrink-0">kg</span>
+                  </div>
                 </label>
                 <label className="block">
                   <div className="text-xs text-slate-400 mb-1">{t("farm.ratePerHa")}</div>
-                  <input
-                    value={form.seedRate}
-                    onChange={(e) => set("seedRate", e.target.value)}
-                    disabled={!form.seedRateCustom}
-                    readOnly={!form.seedRateCustom}
-                    className={`${inputCls} ${!form.seedRateCustom ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
-                  />
+                  <div className={`flex items-center h-10 rounded-lg border overflow-hidden focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100 ${!form.seedRateCustom ? "bg-slate-50 border-slate-200" : "border-slate-200"}`}>
+                    <input
+                      value={form.seedRate}
+                      onChange={(e) => set("seedRate", e.target.value)}
+                      disabled={!form.seedRateCustom}
+                      readOnly={!form.seedRateCustom}
+                      className={`min-w-0 flex-1 h-full pl-3 pr-1 bg-transparent border-0 outline-none text-sm ${!form.seedRateCustom ? "text-slate-500 cursor-not-allowed" : "text-slate-900"}`}
+                    />
+                    <span className="pr-3 text-sm text-slate-400 shrink-0">kg/ha</span>
+                  </div>
                 </label>
               </div>
             </div>
@@ -1446,11 +1548,109 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
   );
 }
 
+export function FieldInfoModal({ field, croppingCount, onClose }: { field: Field; croppingCount: number; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const hasBoundary = !!field.boundary && field.boundary.length >= 3;
+  // The area actually enclosed by the plotted boundary, for comparison
+  // against the area the farmer typed in when the field was created —
+  // these can legitimately differ (a hand-typed estimate vs. corners
+  // actually plotted on the map), which is useful to see, not a bug.
+  const plottedAreaHa = hasBoundary ? polygonAreaHa(field.boundary!) : null;
+
+  function copyCoords() {
+    if (field.latitude == null || field.longitude == null) return;
+    navigator.clipboard.writeText(`${field.latitude}, ${field.longitude}`).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-emerald-50">
+              <Info className="h-4 w-4 text-emerald-600" />
+            </div>
+            <div>
+              <div className="text-slate-900">Field info</div>
+              <div className="text-xs text-slate-500">{field.name}</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          <FieldLocationMap latitude={field.latitude} longitude={field.longitude} boundary={field.boundary} />
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5">
+              <div className="text-xs text-slate-400 mb-0.5">Barangay</div>
+              <div className="text-slate-800">{field.barangay.replace(/([a-z])([A-Z])/g, "$1 $2")}</div>
+            </div>
+            <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5">
+              <div className="text-xs text-slate-400 mb-0.5">Registered area</div>
+              <div className="text-slate-800"><AreaValue valueHa={field.area} /></div>
+            </div>
+            {hasBoundary && plottedAreaHa != null && (
+              <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5">
+                <div className="text-xs text-slate-400 mb-0.5">Plotted boundary area</div>
+                <div className="text-slate-800">
+                  <AreaValue valueHa={plottedAreaHa} />
+                  {Math.abs(plottedAreaHa - field.area) > 0.1 && (
+                    <span className="text-amber-600 text-xs ml-1.5">≠ registered</span>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5">
+              <div className="text-xs text-slate-400 mb-0.5">Cropping periods</div>
+              <div className="text-slate-800">{croppingCount}</div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5 text-sm">
+            <div className="text-xs text-slate-400 mb-0.5">Address</div>
+            <div className="text-slate-800">{field.location}</div>
+          </div>
+
+          {field.latitude != null && field.longitude != null && (
+            <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5 text-sm flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs text-slate-400 mb-0.5">Coordinates</div>
+                <div className="text-slate-800">{field.latitude.toFixed(6)}, {field.longitude.toFixed(6)}</div>
+              </div>
+              <button
+                onClick={copyCoords}
+                className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-200 text-xs text-slate-500 hover:bg-white"
+              >
+                <Copy className="h-3 w-3" /> {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          )}
+
+          {field.notes && (
+            <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2.5 text-sm">
+              <div className="text-xs text-slate-400 mb-0.5">Notes</div>
+              <div className="text-slate-800 italic">"{field.notes}"</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MyFarm() {
   const t = useT();
   const { visibleFields, visiblePredictions, deleteField, deletePrediction, current } = useStore();
   const [addFieldOpen, setAddFieldOpen] = useState(false);
   const [croppingMode, setCroppingMode] = useState<null | "add" | "simulate" | "edit">(null);
+  const [fieldInfoOpen, setFieldInfoOpen] = useState(false);
 
   const fields = useMemo(
     () => [...visibleFields].sort((a, b) => b.createdAt - a.createdAt),
@@ -1471,6 +1671,16 @@ export function MyFarm() {
         .sort((a, b) => b.createdAt - a.createdAt),
     [visiblePredictions, activeField],
   );
+
+  // How much of the field isn't already claimed by a still-growing
+  // cropping — same rule CroppingModal uses for its own area cap. Kept
+  // here too so the "Add Cropping" buttons below can stop the farmer
+  // before they even open the form, instead of only after.
+  const remainingFieldAreaValue = useMemo(
+    () => (activeField ? remainingFieldArea(activeField, visiblePredictions) : 0),
+    [visiblePredictions, activeField],
+  );
+  const fieldIsFull = remainingFieldAreaValue <= 0;
 
   const [activeCroppingId, setActiveCroppingId] = useState<string | null>(null);
   const activeCropping =
@@ -1563,7 +1773,16 @@ export function MyFarm() {
               {/* Field header + actions */}
               <div className="bg-slate-50/70 border border-slate-100 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="text-slate-900 text-lg tracking-tight">{activeField.name}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-slate-900 text-lg tracking-tight">{activeField.name}</div>
+                    <button
+                      onClick={() => setFieldInfoOpen(true)}
+                      className="h-6 w-6 rounded-full flex items-center justify-center text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 shrink-0"
+                      title="Field info"
+                    >
+                      <Info className="h-4 w-4" />
+                    </button>
+                  </div>
                   <div className="text-sm text-slate-500 flex items-center gap-1 mt-0.5">
                     <MapPin className="h-3.5 w-3.5" /> {activeField.location}
                   </div>
@@ -1581,8 +1800,12 @@ export function MyFarm() {
                     <PlayCircle className="h-4 w-4" /> {t("farm.simulateCropping")}
                   </button>
                   <button
-                    onClick={() => setCroppingMode("add")}
-                    className="flex items-center gap-1.5 px-3.5 h-9 rounded-lg text-sm text-white bg-emerald-600 hover:bg-emerald-700"
+                    onClick={() => { if (!fieldIsFull) setCroppingMode("add"); }}
+                    disabled={fieldIsFull}
+                    title={fieldIsFull ? `${activeField.name} is fully planted with a still-growing cropping — nothing harvested yet to free up space.` : undefined}
+                    className={`flex items-center gap-1.5 px-3.5 h-9 rounded-lg text-sm text-white ${
+                      fieldIsFull ? "bg-slate-300 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700"
+                    }`}
                   >
                     <Plus className="h-4 w-4" /> {t("farm.addCropping")}
                   </button>
@@ -1601,6 +1824,15 @@ export function MyFarm() {
                   </button>
                 </div>
               </div>
+              {fieldIsFull && (
+                <div className="-mt-2 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    {activeField.name}'s entire {activeField.area} ha is already planted with a still-growing
+                    cropping — Add Cropping is disabled until some of it is harvested.
+                  </span>
+                </div>
+              )}
 
               {/* Cropping periods */}
               {croppings.length === 0 ? (
@@ -1693,6 +1925,9 @@ export function MyFarm() {
           existing={croppingMode === "edit" ? activeCropping ?? undefined : undefined}
           onClose={() => setCroppingMode(null)}
         />
+      )}
+      {fieldInfoOpen && activeField && (
+        <FieldInfoModal field={activeField} croppingCount={croppings.length} onClose={() => setFieldInfoOpen(false)} />
       )}
     </div>
   );

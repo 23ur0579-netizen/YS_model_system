@@ -42,7 +42,12 @@ export function AuditLog() {
     let list = [...auditLog].sort((a, b) => b.at - a.at);
     if (cat !== "all") list = list.filter((e) => e.category === cat);
     if (q.trim()) {
-      const t = q.toLowerCase();
+      // .trim() here too, not just in the emptiness check above — a
+      // search with an accidental leading/trailing space (a stray
+      // space bar tap, or pasted text) would otherwise need the exact
+      // same space to appear in the same spot in the target text to
+      // match at all, silently missing results it should have found.
+      const t = q.trim().toLowerCase();
       list = list.filter((e) => e.action.toLowerCase().includes(t) || (e.target ?? "").toLowerCase().includes(t) || e.actorName.toLowerCase().includes(t));
     }
     return list;

@@ -196,6 +196,8 @@ export const DICT: Record<string, Entry> = {
   "farm.soilStaticFor":    { en: "Soil pH & moisture: static reference data for", tl: "pH at halumigmig ng lupa: static na reference data para sa", ilo: "pH ken kinabasa ti daga: static a reference data para iti" },
   "farm.adjustIfMeasured": { en: "adjust if measured on-site", tl: "baguhin kung sinukat sa lugar", ilo: "usigen no nasukat idiay lugar" },
   "farm.seedQtyAuto":      { en: "Seed qty (auto)",        tl: "Dami ng binhi (auto)",     ilo: "Kaadu ti bukel (auto)" },
+  "farm.seedQty":           { en: "Seed quantity",         tl: "Dami ng binhi",            ilo: "Kaadu ti bukel" },
+  "farm.quantityWord":      { en: "Quantity",              tl: "Dami",                     ilo: "Kaadu" },
   "farm.unit":              { en: "Unit",                  tl: "Yunit",                    ilo: "Unit" },
   "farm.ratePerHa":         { en: "Rate (/ha)",            tl: "Rate (/ha)",               ilo: "Rate (/ha)" },
   "farm.computedFromArea": { en: "Computed from area × the standard rate for", tl: "Kinompyut mula sa lugar × ang karaniwang rate para sa", ilo: "Nakompute manipud iti lugar × ti kadawyan a rate para iti" },

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Wheat, Leaf, MapPin, ChevronDown, Search, Users, LandPlot, TrendingUp, Sprout as SproutIcon, Download, Plus, X, FileSpreadsheet, Loader2 } from "lucide-react";
-import { useStore, Prediction, Field, maturityDays, adminCrop } from "../store";
+import { Wheat, Leaf, MapPin, ChevronDown, Search, Users, LandPlot, TrendingUp, Sprout as SproutIcon, Download, Plus, X, FileSpreadsheet, Loader2, Info } from "lucide-react";
+import { useStore, Prediction, Field, maturityDays, adminCrop, remainingFieldArea } from "../store";
 import { BARANGAY_FACTS, BARANGAY_DATA } from "../data/binalonan";
 import { exportPredictionsCSV, exportPredictionsPDF } from "../export";
-import { CroppingModal } from "./MyFarm";
+import { CroppingModal, FieldInfoModal } from "./MyFarm";
 import { YieldValue, AreaValue } from "./UnitValue";
 import { StatCard } from "./StatCard";
 import * as api from "../lib/api";
@@ -31,6 +31,7 @@ export function AdminFarms() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
   const [predictionField, setPredictionField] = useState<Field | null>(null);
+  const [infoField, setInfoField] = useState<Field | null>(null);
   const [reportsOpen, setReportsOpen] = useState(false);
 
   // A Corn/Palay-assigned admin only ever sees that crop's fields and
@@ -220,26 +221,37 @@ export function AdminFarms() {
 
                       if (crops.length === 0) {
                         // Registered farm, no cropping filed yet — nothing to
-                        // expand, just the option to start one.
+                        // expand, just the option to start one (and to see
+                        // this field's own info/map, independent of whether
+                        // it has any croppings at all).
                         return (
-                          <button
+                          <div
                             key={f.id}
                             onClick={() => setPredictionField(f)}
-                            className="w-full px-6 py-3.5 flex items-center gap-4 text-left hover:bg-emerald-50/30 transition-colors"
+                            className="w-full px-6 py-3.5 flex items-center gap-4 text-left hover:bg-emerald-50/30 transition-colors cursor-pointer"
                           >
                             <div className="flex items-center gap-2.5 min-w-0 flex-1">
                               <div className="h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-white text-xs bg-gradient-to-br from-emerald-400 to-emerald-700">
                                 {avatarInitials(f.farmer)}
                               </div>
                               <div className="min-w-0">
-                                <div className="text-sm text-slate-800 truncate">{f.farmer} · {f.name}</div>
+                                <div className="text-sm text-slate-800 truncate flex items-center gap-1.5">
+                                  {f.farmer} · {f.name}
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setInfoField(f); }}
+                                    className="h-5 w-5 rounded-full flex items-center justify-center text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 shrink-0"
+                                    title="Field info"
+                                  >
+                                    <Info className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                                 <div className="text-xs text-slate-400 truncate"><AreaValue valueHa={f.area} /> · No cropping filed yet</div>
                               </div>
                             </div>
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border border-emerald-200 text-emerald-700 bg-emerald-50 shrink-0">
                               <Plus className="h-3 w-3" /> Add prediction
                             </span>
-                          </button>
+                          </div>
                         );
                       }
 
@@ -250,16 +262,25 @@ export function AdminFarms() {
                       return (
                         <div key={f.id}>
                           {/* Field header — expand to see every cropping on it */}
-                          <button
+                          <div
                             onClick={() => toggleField(f.id)}
-                            className="w-full px-6 py-3.5 flex items-center gap-4 text-left hover:bg-slate-50/60 transition-colors"
+                            className="w-full px-6 py-3.5 flex items-center gap-4 text-left hover:bg-slate-50/60 transition-colors cursor-pointer"
                           >
                             <div className="flex items-center gap-2.5 min-w-0 flex-1">
                               <div className="h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-white text-xs bg-gradient-to-br from-emerald-400 to-emerald-700">
                                 {avatarInitials(f.farmer)}
                               </div>
                               <div className="min-w-0">
-                                <div className="text-sm text-slate-800 truncate">{f.farmer} · {f.name}</div>
+                                <div className="text-sm text-slate-800 truncate flex items-center gap-1.5">
+                                  {f.farmer} · {f.name}
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setInfoField(f); }}
+                                    className="h-5 w-5 rounded-full flex items-center justify-center text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 shrink-0"
+                                    title="Field info"
+                                  >
+                                    <Info className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                                 <div className="text-xs text-slate-400 truncate flex items-center gap-1 flex-wrap">
                                   <AreaValue valueHa={f.area} /> · {crops.length} cropping{crops.length === 1 ? "" : "s"}
                                   {!fieldOpen && (
@@ -271,7 +292,7 @@ export function AdminFarms() {
                               </div>
                             </div>
                             <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${fieldOpen ? "" : "-rotate-90"}`} />
-                          </button>
+                          </div>
 
                           {/* Croppings within this field */}
                           {fieldOpen && (
@@ -342,21 +363,32 @@ export function AdminFarms() {
                   No fields match — an owner must have a registered field before you can predict for them.
                 </div>
               )}
-              {pickerFields.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => { setPredictionField(f); setPickerOpen(false); }}
-                  className="w-full px-5 py-3 flex items-center gap-3 text-left hover:bg-emerald-50/40 transition-colors"
-                >
-                  <div className="h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-white text-xs bg-gradient-to-br from-emerald-400 to-emerald-700">
-                    {avatarInitials(f.farmer)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-slate-800 truncate">{f.farmer} · {f.name}</div>
-                    <div className="text-xs text-slate-400 truncate">{labelFor(f.barangay)} · <AreaValue valueHa={f.area} /></div>
-                  </div>
-                </button>
-              ))}
+              {pickerFields.map((f) => {
+                const remaining = remainingFieldArea(f, predictions);
+                const isFull = remaining <= 0;
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => { if (!isFull) { setPredictionField(f); setPickerOpen(false); } }}
+                    disabled={isFull}
+                    title={isFull ? `${f.name} is fully planted with a still-growing cropping — nothing harvested yet to free up space.` : undefined}
+                    className={`w-full px-5 py-3 flex items-center gap-3 text-left transition-colors ${
+                      isFull ? "opacity-50 cursor-not-allowed" : "hover:bg-emerald-50/40"
+                    }`}
+                  >
+                    <div className="h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-white text-xs bg-gradient-to-br from-emerald-400 to-emerald-700">
+                      {avatarInitials(f.farmer)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm text-slate-800 truncate">{f.farmer} · {f.name}</div>
+                      <div className="text-xs text-slate-400 truncate">{labelFor(f.barangay)} · <AreaValue valueHa={f.area} /></div>
+                    </div>
+                    {isFull && (
+                      <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Full</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -368,6 +400,14 @@ export function AdminFarms() {
           mode="add"
           onBehalf={{ ownerId: predictionField.ownerId, farmerName: predictionField.farmer }}
           onClose={() => setPredictionField(null)}
+        />
+      )}
+
+      {infoField && (
+        <FieldInfoModal
+          field={infoField}
+          croppingCount={(predictionsByField[infoField.id] ?? []).length}
+          onClose={() => setInfoField(null)}
         />
       )}
 

@@ -29,7 +29,8 @@ YieldShield_ML/
     ├── 06_train_random_forest.R
     ├── 07_train_xgboost.R
     ├── 08_model_evaluation.R
-    └── 09_predict_new_farmer.R
+    ├── 09_predict_new_farmer.R
+    └── 11_extract_farm_level_data.R   # separate, optional - see its own section below
 ```
 
 ## How it fits together
@@ -93,6 +94,40 @@ predicted yield in MT/ha.
 scenario." If YieldShield needs true per-plot predictions, the training
 data needs to be collected at that grain.
 
+## Getting real per-farmer data for a future retrain (script 11)
+
+The scale caveat above is a real limitation, checked directly rather than
+assumed: the historical dataset behind this whole pipeline has never had a
+column for ecosystem, seed source, variety, or planting technique at the
+individual-farmer level - not because whoever built it overlooked it, but
+because the source records (the Municipal Agriculture Office's own
+historical reports) simply don't carry that detail below the barangay
+level. No amount of re-processing the existing workbook recovers
+information that was never collected in the first place.
+
+The one place that detail *does* exist is the live YieldShield application
+itself - every cropping a farmer submits records their ecosystem, seed
+source, variety, technique, and (once harvested) an actual yield, all tied
+to one specific plot. `scripts/11_extract_farm_level_data.R` pulls exactly
+that, directly from the application's database, as a new, separate dataset
+- it never reads or writes anything this pipeline's own `01_audited.rds`
+through `05_model_ready.rds` files touch, and the original Excel workbook
+is untouched either way.
+
+It's deliberately not part of `run_pipeline.R` or the numbered 01-09
+sequence: it needs live database credentials the rest of this pipeline has
+no reason to have, and - this is the important part - **running it today
+would mostly just extract seeded test data, not real farmer outcomes**.
+There's no way to tell a genuine harvest from a synthetic one once it's in
+the database, so the script's row count and category-coverage summary is
+there to help you judge for yourself whether what comes back is worth
+training on, rather than assuming more rows automatically means better.
+Give it real farmers, across real seasons, first.
+
+See the script's own header comment for exact setup steps (it needs the
+`yieldshield_analyst` database role specifically, and the `DBI` /
+`RPostgres` R packages this pipeline doesn't otherwise use).
+
 ## Dataset-specific notes (binalonan_crop_data4.xlsx, "Crop Features" sheet)
 
 `config.R` / `utils.R` / `scripts/03_feature_engineering.R` are tailored to
@@ -132,4 +167,12 @@ install.packages(c(
   "readxl", "dplyr", "tidyr", "caret", "randomForest",
   "xgboost", "Metrics", "openxlsx"
 ))
+```
+
+`scripts/11_extract_farm_level_data.R` additionally needs `DBI` and
+`RPostgres` (only that script uses a live database connection - nothing
+else in this pipeline does):
+
+```r
+install.packages(c("DBI", "RPostgres"))
 ```

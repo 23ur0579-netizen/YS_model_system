@@ -98,12 +98,25 @@ def _encode_categorical(manifest: dict, col: str, value: str) -> tuple[dict, boo
     reported confidence instead of silently pretending certainty."""
     spec = manifest["categorical_levels"][col]
     sep = manifest["dummy_sep"]
-    known = set(spec["dummy_levels"]) | {spec["reference"]}
+    # R's jsonlite auto-unboxes a length-1 character vector to a bare
+    # JSON string instead of a 1-element array - which is exactly what
+    # a binary categorical's "levels other than the reference" list
+    # looks like (crop_type: just "Palay"; season_type: just "WS").
+    # Without this, set("Palay") / (`for level in "Palay"`) iterates
+    # per *character* ('P','a','l','a','y') instead of per level - every
+    # such column silently never matches, permanently miscoding it as
+    # always-reference and permanently mis-triggering the "unseen
+    # category" confidence penalty on every single prediction, without
+    # ever raising an exception to reveal it.
+    dummy_levels = spec["dummy_levels"]
+    if isinstance(dummy_levels, str):
+        dummy_levels = [dummy_levels]
+    known = set(dummy_levels) | {spec["reference"]}
     unseen = value not in known
     effective_value = spec["reference"] if unseen else value
     dummies = {
         f"{col}{sep}{level}": (1.0 if effective_value == level else 0.0)
-        for level in spec["dummy_levels"]
+        for level in dummy_levels
     }
     return dummies, unseen
 

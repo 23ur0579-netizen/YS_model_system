@@ -1106,3 +1106,461 @@ misleading for anyone reading the code afterward, including a future
 session of this same work.
 
 No other functional bugs found in this pass.
+
+---
+
+## Clarified why the saved prediction can differ from the live preview while editing (this session)
+
+Traced a real user report — "the prediction changes while editing but
+doesn't change after saving" — all the way through rather than
+guessing. Confirmed this is by-design, not a bug, but confusing UX
+worth fixing anyway:
+
+- **The "Live prediction" shown while typing** is `store.tsx`'s
+  client-side heuristic (`score()`) — it reacts to everything: soil
+  readings, planting date, ecosystem, seed source, variety, technique.
+- **The prediction actually saved and displayed afterward** comes from
+  `_score_submission()` → `predict_for_submission()` (the real trained
+  model), whose function signature only ever takes barangay, crop, and
+  planting date — confirmed by reading it directly, not assumed. It
+  genuinely never sees ecosystem/seed source/variety/technique.
+- Verified this isn't a stale-data bug either: the "latest prediction"
+  query (`farms.py`) correctly orders by `date_generated DESC`, and
+  the frontend correctly overwrites its optimistic client-side number
+  with whatever the server actually returns once the save completes —
+  editing *does* re-score against the real model every time, it just
+  won't move for changes the real model was never built to weigh.
+
+Added a plain-language note directly under the Live Prediction banner
+in `MyFarm.tsx`'s cropping form (add and edit, not Simulation, which
+never touches the real model at all) explaining this *before* saving,
+rather than letting the number silently change afterward with no
+explanation. This is the same "trained on barangay+season aggregates,
+not individual-plot detail" scale limitation flagged earlier when the
+crop_variety catalog was wired in — not a new gap, just one that
+hadn't been surfaced to the person actually using the form yet.
+
+`tsc --noEmit` clean after this change.
+
+---
+
+## Fixed: Calendar showing doubled activities after editing a cropping (this session)
+
+Traced this to a real, specific gap rather than guessing at the cause.
+The edit-triggered schedule recalculation (built a while back) deletes
+only `auto_generated = TRUE, done = FALSE` rows before inserting the
+new schedule. Migration 22 backfilled every row that existed *at that
+moment* to TRUE — but any cropping schedule generated *after* that
+migration ran and *before* the matching code change (`submit_farm_
+input` explicitly setting `auto_generated = TRUE` on insert) was
+actually deployed got the column's plain default instead: FALSE.
+Editing one of those croppings later — on an otherwise fully
+up-to-date deployment — runs the recalculation correctly, but its
+DELETE step can't find those FALSE-flagged rows to remove, so the new
+schedule lands *next to* the old one instead of replacing it. Ruled
+out a frontend rendering bug first: every task list keys by the task's
+actual database ID, so this is genuinely two separate rows, not a
+render duplicate.
+
+**Migration 25**, in two steps:
+1. Retroactively flags any mislabeled row as `auto_generated = TRUE`
+   by matching `generate_activities()`'s known, fixed task-text
+   patterns (as prefixes, to account for its optional appended weather
+   note) — these are specific agronomic phrases a hand-typed task
+   wouldn't plausibly duplicate, so this is a safe way to identify them
+   after the fact regardless of the flag's historical accuracy.
+2. Removes the duplicates that gap already produced: every row one
+   `generate_activities()` call inserts shares the exact same
+   `created_at` (Postgres's `now()` is fixed per-transaction, not
+   per-statement), so grouping by `(input_log_id, created_at)`
+   reliably tells one generation batch from another — keeping only the
+   most recent batch per cropping removes exactly the stale schedule.
+   Completed tasks and hand-added ones are untouched either way.
+
+This is a one-time historical gap, not an ongoing bug — every current
+code path that creates these rows already sets the flag correctly.
+
+---
+
+## Follow-up: pinned down exactly why an edited prediction can look completely unchanged, even after reload (this session)
+
+Direct follow-up to the "live preview differs from saved prediction"
+explanation from earlier — the person reported a sharper version of
+it: the number didn't change at all, even after a full page reload
+(ruling out a stale-cache theory). Traced this to a specific,
+verifiable mechanism instead of re-stating the earlier general
+explanation:
+
+`features.py`'s `get_climate_features()` looks up climate data by
+**`(year, month_no)` only** — `WHERE cr.year = %s AND cr.month_no =
+%s`. Two planting dates that fall in the same calendar month produce
+*mathematically identical* climate inputs to the model, and since
+ecosystem/seed source/variety/technique already don't factor in at
+all (per the earlier finding), an edit that changes the day but not
+the month is guaranteed to produce a byte-for-byte identical
+prediction. That's the correct, unchanged output for that input — not
+evidence the edit failed to save.
+
+Also directly ruled out two genuine-bug candidates before landing on
+this explanation: confirmed `yield_prediction` has no RLS at all (so
+nothing could be silently blocking the INSERT for an admin editing on
+behalf of a farmer), and re-read the entire `update_farm_input`
+prediction-recalculation block end to end looking for a logic error —
+found none; it correctly re-scores and re-inserts on every edit,
+exactly as designed.
+
+Updated the note added earlier in `MyFarm.tsx`'s cropping form to
+name this precisely — "won't move ... for a planting date change that
+stays within the same calendar month as before" — rather than leaving
+it as a vaguer "may differ" caveat.
+
+`tsc --noEmit` clean after this change.
+
+---
+
+## Investigated "cropping fields revert on reload" — two real fixes, one structural, one root-cause (this session)
+
+This took a genuinely exhaustive investigation before landing anywhere,
+specifically to avoid guessing: checked RLS on `farm_input_log` for a
+farmer editing their own record (correctly permitted), checked every
+DB-level CHECK constraint against what the API/frontend can actually
+send (including specifically re-verifying "Farmer Saved Seeds" against
+the `seed_type` constraint, since that exact category was added in a
+later migration than the original constraint — it was correctly
+updated), checked the request serialization path, and checked the ML
+model's exception handling end to end. Found no single confirmed crash
+that fully explains every report, but found two real, independently
+worthwhile things to fix:
+
+**1. Root-cause bug, confirmed against the actual deployed model
+files, not assumed:** `_encode_categorical()` in `model.py` did
+`set(spec["dummy_levels"])` and `for level in spec["dummy_levels"]`
+directly. R's `jsonlite` auto-unboxes a length-1 character vector into
+a bare JSON string instead of a 1-element array — and `crop_type`
+(Corn/Palay) and `season_type` (DS/WS) are both binary, so their
+"non-reference levels" list is exactly length 1. Loaded the actual
+`feature_manifest.json`/`rf_trees.json` from `backend/app/ml/artifacts/`
+and confirmed directly: `dummy_levels` for `crop_type` is the bare
+string `"Palay"`, not `["Palay"]` — meaning the old code iterated it
+character-by-character (`'P'`, `'a'`, `'l'`, `'y'`), producing
+`crop_type.P`/`crop_type.a`/etc. instead of `crop_type.Palay`. Cross-
+checked all 500 trees' actual feature references against this and
+found 177 nodes across the forest referencing `crop_type.Palay` or
+`season_type.WS` — features the old code could never produce. Every
+Palay or Wet-Season prediction therefore (a) always encoded crop/
+season as their reference values regardless of the real input, and
+(b) always triggered the "unseen category" confidence penalty (-20)
+it was never supposed to. This is very likely a real contributor to
+the noticeably-lower confidence scores observed earlier this session.
+Fixed by normalizing a bare string to a 1-element list before use, and
+verified against the real deployed files that this brings all 177
+mismatches to zero.
+
+**2. Structural fix, regardless of whichever failure caused any one
+report:** `updatePrediction` (store.tsx) applied its optimistic local
+update and returned immediately, with the actual server save happening
+in the background — a real failure only ever surfaced as an easy-to-
+miss toast a moment later, with the edited values staying on screen as
+if nothing had gone wrong until the next reload silently revealed the
+server never received it. This was flagged as a known risk several
+sessions ago and left as-is at the time; this report is what that risk
+predicted. `updatePrediction` now returns a Promise: the optimistic
+update still applies instantly for responsive UI, but a save failure
+now rolls the on-screen values back to the last confirmed-good state
+and rejects the Promise. `MyFarm.tsx`'s save() now awaits it — success
+closes the modal as before; failure keeps the modal open with a real,
+specific error instead of quietly closing as if it worked. Checked:
+`updatePrediction` had exactly one call site, so this is a fully
+contained change.
+
+`python -m py_compile` / `tsc --noEmit` both clean after these changes.
+
+---
+
+## Polished the seed quantity/rate section's visual design (this session)
+
+Purely a UI polish pass on the Auto/Custom toggle section built a
+few sessions back — no behavior changes.
+
+What was off: the section label stayed "Seed qty (auto)" even in
+Custom mode (stale/contradictory), the Auto/Custom indicator was a
+plain text label sitting loosely next to the switch rather than
+reading as one control, and the 3-column layout put a permanently-
+disabled "Unit" box (always just "kg") between two active,
+editable ones — visually uneven and not doing much work for a value
+that never changes.
+
+Changed to a 2-column layout: each field now shows its unit as an
+inline suffix inside the input itself ("40 kg", "40 kg/ha") — a
+standard, more compact pattern for a fixed unit — and the Auto/Custom
+indicator is now one cohesive pill (colored background, state text,
+and the switch together) instead of two separate elements side by
+side. The section label is now state-agnostic ("Seed quantity"),
+correct whether it's currently Auto or Custom.
+
+`tsc --noEmit` clean after this change.
+
+---
+
+## A field's remaining area is now tracked across all its active croppings (this session)
+
+Previously, the cropped-area cap only ever checked a single cropping
+against the field's *total* size — a field could have an active
+cropping already using its entire area, and the form would still
+happily let you add another cropping for the same full area again,
+double-counting the same physical land.
+
+**Now:** area is capped against what's actually still free — the
+field's total minus every *other* still-growing cropping on it
+(anything with no recorded actual yield yet; a harvested cropping's
+land is correctly treated as free again for the next planting).
+Editing an existing cropping excludes that cropping's own current area
+from the calculation, so opening Edit never makes the field look
+smaller than it actually is.
+
+- The area input clamps live as you type, same pattern as the
+  existing field-size cap it replaces.
+- A field with zero space left shows the input disabled with a clear
+  red explanation instead of a puzzling "why can't I type here."
+- A field with some space left shows exactly how much ("1.2 of 2.0 ha
+  still free on Bued Ricefield").
+- Save is validated against the same number either way, so this can't
+  be bypassed by typing past what the UI suggests.
+
+Simulation mode is untouched — it never actually claims field area in
+the first place, so nothing about it should be capped by this.
+
+`tsc --noEmit` clean after these changes.
+
+---
+
+## Stopped users before opening the form, not just inside it, when a field has no space left (this session)
+
+Direct follow-up to the field-area-occupancy fix above — moved the
+block earlier in the flow, and found a third place it needed to apply
+that wasn't obvious from MyFarm.tsx alone.
+
+Extracted the "how much of this field is actually still free" rule
+into one shared function (`remainingFieldArea` in store.tsx) instead
+of leaving it duplicated, since it turned out to be needed in three
+places, not the one:
+
+- **MyFarm.tsx's field-detail "Add Cropping" button** — now disabled
+  outright (grayed out, with a hover tooltip explaining why) instead
+  of opening the form only to immediately reject you, with a visible
+  banner underneath spelling out the same reason.
+- **AdminFarms.tsx's on-behalf-of field picker** — a field with no
+  space left now shows a "Full" badge and can't be selected from the
+  list at all, same reasoning, since this is a second, independent
+  entry point into the exact same form that the first fix alone
+  wouldn't have covered.
+- The CroppingModal's own in-form cap (from the previous fix) is
+  unchanged and still there as a second layer — e.g. for the case
+  where a field goes from "some space" to "no space" while the form
+  happens to already be open in another tab.
+
+The "no croppings yet" empty-state button doesn't need this: a field
+with zero croppings has zero occupied area by definition, so it can
+never actually be full.
+
+`tsc --noEmit` clean after these changes.
+
+---
+
+## Fixed a real CSS bug in the redesigned seed-rate toggle (this session)
+
+The pill redesign from last session had a genuine sizing bug: the
+thumb circle (`h-4 w-4`, 16px) was exactly as tall as its own track
+(`h-4`, 16px) — with the `top-0.5` offset applied on top of that, it
+had nowhere to actually fit, so it rendered pinched/overflowing
+instead of sitting cleanly inside the track.
+
+Rebuilt using the exact same proportions as the original, larger
+toggle switch (proven to render correctly): a 36x20px track with a
+16px thumb, 2px of padding on every side in both positions — verified
+this precisely, not just eyeballed, since "proportions look about
+right" was exactly what produced the bug the first time. The pill
+wrapper's padding was bumped up slightly to comfortably fit this
+correctly-proportioned control instead of the undersized one from the
+previous version.
+
+`tsc --noEmit` clean after this change.
+
+---
+
+## Checked the Crop Varieties sheet thoroughly, wired in a genuine new factor, corrected a stale assumption (this session)
+
+Went back and pulled every column from `binalonan_crop_data4.xlsx`'s
+"Crop Varieties" sheet directly, rather than relying on what I'd
+extracted from it several sessions ago. It has more than
+`maturity_days`/`category`: `average_yield_t_ha`, `maximum_yield_t_ha`,
+`recommended_ecosystem`, `grain_type`, `drought_tolerance`,
+`flood_tolerance`, `disease_resistance`, `source`.
+
+**Important honest finding, checked rather than assumed:** within
+every (crop, category) group — Palay Inbred, Palay Hybrid, Corn
+Hybrid, Corn GM Hybrid, Corn OPV — every one of these columns is a
+*constant*. "Rc160" and "Rc216" (both Palay Inbred) carry identical
+average_yield_t_ha, maturity_days, and every other column. This sheet
+differentiates by category, not by individual named variety, despite
+appearing to be per-variety data. Also found `disease_resistance` is
+literally "Varies" for every single row (zero information) and
+`flood_tolerance` only differs by crop, not variety — neither is worth
+surfacing as if it were meaningful per-variety detail.
+
+**Already wired in, confirmed by reading the code, not assumed:**
+`average_yield_t_ha` and `maturity_days` were already flowing through
+to both the UI display and the actual yield heuristic
+(`varietyAvgYieldTHa` in store.tsx's `score()`) — for DA-catalog
+varieties specifically; own-seed/traditional varieties were never in
+this catalog to begin with, so they still use the flat crop-generic
+baseline.
+
+**Newly wired in:** `recommended_ecosystem` was sitting completely
+unused. Added a real, if modest (-8%), adjustment to the yield
+heuristic when a selected DA-catalog variety's recommended ecosystem
+genuinely conflicts with the ecosystem the cropping is actually set to
+(an "Irrigated Lowland" variety grown rainfed, or vice versa) — a
+real, documented agronomic risk the catalog itself was already
+flagging but nothing used. Paired with a visible amber note in the
+form explaining exactly why, so a lower number has a reason attached
+instead of just appearing lower with no explanation.
+
+**Also fixed in passing:** a stale comment on `score()` claiming
+"there's no live ML model service in this build yet" — that was true
+when this heuristic was written, but the real trained-model
+integration (`_score_submission` in farm_input.py) has existed for a
+while now; this heuristic is the *fallback* path, not the only path.
+
+**Scope, stated plainly:** this only affects the client-side quick
+estimate and its fallback role in `update_farm_input`. It does not
+change what's feasible for the official trained Random Forest model —
+that model's training data still has no per-variety/ecosystem-at-farm
+information at all (see the previous session's finding: 874
+barangay-season rows, barangay/soil/season/climate columns only), and
+this sheet — being category-level, not variety-level, and living in
+the deployment's reference catalog rather than the ML training
+pipeline's own dataset — doesn't change that.
+
+`tsc --noEmit` clean after these changes.
+
+---
+
+## New: Field Info panel with a map showing where the field was plotted (this session)
+
+Checked the existing field-detail view first — it showed name, address
+text, area, and notes, but nothing about *where* the field actually is:
+no map, no coordinates, no visualization of the boundary a farmer may
+have plotted corner-by-corner when the field was created.
+
+Added an "info" icon next to the field name that opens a new **Field
+Info** panel showing:
+- **A map** of the field's actual recorded location — the plotted
+  boundary polygon if one exists (satellite or street view, toggleable),
+  falling back to a plain pin if only a single point was ever set, and a
+  clear "no location recorded" state if neither exists. This is a new,
+  deliberately lightweight, read-only component
+  (`FieldLocationMap.tsx`) — the two existing map components
+  (`MapPicker`, `FieldMapPlotter`) are both interactive *editing* tools
+  (dragging pins, plotting corners) and would have needed to be forced
+  into a fake read-only mode to reuse; a small dedicated viewer was the
+  cleaner fit.
+- Barangay, registered area, address, and cropping-period count.
+- **The boundary's actual enclosed area**, computed from the plotted
+  corners themselves (reusing `polygonAreaHa` from `lib/geo.ts`,
+  already used by the plotting tool itself) — shown alongside the
+  registered area with a flag if they meaningfully disagree, since a
+  hand-typed estimate and an actually-plotted shape can legitimately
+  differ, which is useful information rather than a bug to hide.
+- Coordinates with a one-click copy button, when a location was set.
+
+Scoped to `MyFarm.tsx`'s field-detail view specifically, where this
+gap actually was — `AdminFarms.tsx` has its own, separately-designed
+field list/table and wasn't touched; happy to extend this same panel
+there too if wanted.
+
+`tsc --noEmit` clean after these changes.
+
+---
+
+## Unit-conversion dropdown indicator + full filter audit (this session)
+
+**Unit dropdowns** (`YieldValue`/`AreaValue`/`SeedRateValue` in
+`UnitValue.tsx`, plus the standalone one in MyFarm.tsx's harvest-
+recording form) used `appearance-none` to strip the native `<select>`
+arrow, with nothing put in its place — so a value like "4.63 t/ha" gave
+no visual hint that "t/ha" was actually clickable to switch units.
+Added a small "⏷" next to every one of these, consistently, so every
+unit-conversion control in the app now reads the same way at a glance.
+
+**Filter audit:** went through every filter control in the app —
+`AuditLog`'s category chips, `ManageUsers`'s role filter, `SeedDistribution`'s
+barangay/status/crop filters, `Notifications`'s category and
+announcement-tag filters, `AdminFarms`'s search/crop-scope filtering,
+`Planning`'s priority filter, `Calendar`'s crop/field filters — checking
+both that each one's state actually narrows the displayed list, and
+that its option list matches the real underlying data type (a common
+way filters look present but quietly do nothing). All of them checked
+out correctly; no bug found in this pass. If something specific still
+isn't behaving as expected, a concrete example (which screen, which
+filter, what's expected vs. what's shown) would help track down
+whatever this code-level review didn't surface.
+
+`tsc --noEmit` clean after these changes.
+
+---
+
+## Extended Field Info to the admin field list too (this session)
+
+Direct follow-up to the Field Info panel from last session — flagged
+at the time that `AdminFarms.tsx` has its own, separately-built field
+list and wasn't covered yet. Added the same info icon there now,
+reusing the exact same modal rather than building a second one:
+
+- Exported `FieldInfoModal` from `MyFarm.tsx` (it was a local,
+  unexported function) and imported it into `AdminFarms.tsx` — one
+  modal, two entry points, so the map/boundary-area/coordinates
+  display can't drift out of sync between the farmer's own view and
+  the admin's.
+- Added the info icon to both row states in the admin's per-barangay
+  field list: a field with no croppings filed yet, and a field with
+  one or more. Each row's own click-to-expand/click-to-add-cropping
+  behavior still works exactly as before — the info icon stops its
+  click from bubbling up to that, rather than triggering both at once.
+- Cropping count shown respects the same corn/palay coordinator
+  scoping already used everywhere else in this view — a crop-locked
+  admin sees the count for their own crop only, consistent with
+  everything else they can see on that screen, not an
+  under-count bug.
+
+`tsc --noEmit` clean after these changes.
+
+---
+
+## Dedicated search-filter audit — 3 real bugs found and fixed (this session)
+
+Checked every search input in the app specifically (different failure
+modes than dropdown/tab filters) — `AdminFarms.tsx` (both its main list
+and its on-behalf-of picker), `AuditLog.tsx`, `ManageUsers.tsx`,
+`Planning.tsx`, and `SearchableSelect.tsx` (the variety/technique
+picker). `ManageUsers.tsx` and both `AdminFarms.tsx` searches were
+already correct — checked as a baseline before concluding anything.
+
+**`AuditLog.tsx` and `Planning.tsx`** both trimmed the query only for
+their "is this empty" check, not for the actual string used to match
+against — so a search with an accidental leading/trailing space (a
+stray space bar tap, or pasted text) needed that exact same space in
+the same spot in the target text to match at all, silently missing
+results it should have found. Fixed both to trim the same string
+that's actually used for matching, same pattern `ManageUsers.tsx` and
+`AdminFarms.tsx` already used correctly.
+
+**`SearchableSelect.tsx`** (the variety/technique picker) only matched
+against an option's bare name, never its subtitle — even though the
+subtitle (category, grain type, maturity, e.g. "Hybrid · Yellow/White
+grain") is visible text sitting right there in the open dropdown.
+Typing "hybrid" to narrow down to hybrid varieties found nothing,
+despite "Hybrid" being visibly displayed on multiple options. Now
+matches against both.
+
+`tsc --noEmit` clean after these changes.

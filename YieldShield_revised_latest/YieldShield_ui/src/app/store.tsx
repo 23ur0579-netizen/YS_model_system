@@ -244,7 +244,10 @@ type Store = {
   login: (u: User) => void;
   logout: () => void;
   addPrediction: (p: Omit<Prediction, "id" | "predictedYield" | "confidence" | "createdAt" | "ownerId"> & { ownerId?: string }) => Prediction;
-  updatePrediction: (id: string, patch: Partial<Omit<Prediction, "id" | "ownerId" | "predictedYield" | "confidence" | "createdAt">>) => Prediction | null;
+  // Returns a Promise, not the value directly — see the implementation:
+  // a save failure must be reported and rolled back, not just left as
+  // an optimistic local value that quietly stops matching the server.
+  updatePrediction: (id: string, patch: Partial<Omit<Prediction, "id" | "ownerId" | "predictedYield" | "confidence" | "createdAt">>) => Promise<Prediction | null>;
   setCurrent: (p: Prediction | null) => void;
   recordHarvest: (id: string, actualYield: number, harvestDate: string, harvestNotes?: string) => void;
   deletePrediction: (id: string) => void;
@@ -325,6 +328,22 @@ const BARANGAY_KEY_TO_BACKEND_LABEL: Record<string, string> = {
 const BACKEND_LABEL_TO_BARANGAY_KEY: Record<string, string> = Object.fromEntries(
   Object.entries(BARANGAY_KEY_TO_BACKEND_LABEL).map(([k, v]) => [v, k]),
 );
+// How much of a field isn't already claimed by a still-growing
+// cropping — a harvested cropping's land is free again for the next
+// planting, so only ones with no recorded actual yield yet count as
+// "occupying" space. Pass excludeId when checking this for a cropping
+// that's currently being edited, so its own current area doesn't
+// count against itself. Shared by MyFarm.tsx's CroppingModal (caps the
+// area input) and its field-detail view (gates the Add Cropping
+// button before the form ever opens), and AdminFarms.tsx's on-behalf-
+// of field picker — one rule, not three copies of it.
+export function remainingFieldArea(field: Field, predictions: Prediction[], excludeId?: string): number {
+  const occupied = predictions
+    .filter((p) => p.fieldId === field.id && p.actualYield === undefined && p.id !== excludeId)
+    .reduce((sum, p) => sum + p.area, 0);
+  return Math.max(0, field.area - occupied);
+}
+
 export function keyToLabel(key: string): string {
   return BARANGAY_KEY_TO_BACKEND_LABEL[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
@@ -1151,9 +1170,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     updatePrediction: (id, patch) => {
       let updated: Prediction | null = null;
+      let previous: Prediction | null = null;
       setPredictions((prev) =>
         prev.map((p) => {
           if (p.id !== id) return p;
+          previous = p;
           const merged = { ...p, ...patch };
           const { yieldPerHa, confidence } = score(merged);
           updated = { ...merged, predictedYield: yieldPerHa, confidence };
@@ -1162,53 +1183,67 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       );
       setCurrent((c) => (c && c.id === id && updated ? updated : c));
 
-      if (updated && !isLocalId(id)) {
-        const u = updated as Prediction;
-        api
-          .updateFarmInput(Number(id), {
-            barangay: patch.barangay ? keyToLabel(patch.barangay) : undefined,
-            crop: patch.crop,
-            planting_date: patch.plantingDate,
-            area_ha: patch.area,
-            quantity: patch.quantity,
-            quantity_unit: patch.quantityUnit,
-            notes: patch.notes,
-            variety: patch.variety,
-            technique: patch.technique,
-            spacing: patch.spacing,
-            seed_rate: patch.seedRate,
-            ecosystem: patch.ecosystem,
-            seed_type: patch.seedType,
-            ph: patch.ph,
-            moisture: patch.moisture,
-            temperature: patch.temperature,
-            rainfall: patch.rainfall,
-            predicted_yield_mt_ha: u.predictedYield,
-            confidence: u.confidence,
-          })
-          .then((saved) => {
-            const reconciled: Prediction = {
-              ...u,
-              predictedYield: saved.predicted_yield_mt_ha ?? u.predictedYield,
-              confidence: saved.confidence ?? u.confidence,
-              algorithm: saved.algorithm ?? undefined,
-            };
-            setPredictions((prev) => prev.map((x) => (x.id === id ? reconciled : x)));
-            setCurrent((c) => (c && c.id === id ? reconciled : c));
-            // A changed planting date or technique may have just made
-            // the backend recalculate this cropping's auto-generated
-            // care schedule (see farm_input.py's update_farm_input) —
-            // re-fetch so Calendar.tsx and WeekPlan.tsx (both read the
-            // same `tasks` list) pick up the new due dates right away,
-            // not just on the next full reload.
-            refreshTasks();
-          })
-          .catch((err) => {
-            console.error("Failed to save cropping edits", err);
-            toast.error("Edits saved locally, but couldn't reach the server.");
-          });
+      if (!updated || isLocalId(id)) {
+        return Promise.resolve(updated);
       }
-      return updated;
+
+      const u = updated as Prediction;
+      return api
+        .updateFarmInput(Number(id), {
+          barangay: patch.barangay ? keyToLabel(patch.barangay) : undefined,
+          crop: patch.crop,
+          planting_date: patch.plantingDate,
+          area_ha: patch.area,
+          quantity: patch.quantity,
+          quantity_unit: patch.quantityUnit,
+          notes: patch.notes,
+          variety: patch.variety,
+          technique: patch.technique,
+          spacing: patch.spacing,
+          seed_rate: patch.seedRate,
+          ecosystem: patch.ecosystem,
+          seed_type: patch.seedType,
+          ph: patch.ph,
+          moisture: patch.moisture,
+          temperature: patch.temperature,
+          rainfall: patch.rainfall,
+          predicted_yield_mt_ha: u.predictedYield,
+          confidence: u.confidence,
+        })
+        .then((saved) => {
+          const reconciled: Prediction = {
+            ...u,
+            predictedYield: saved.predicted_yield_mt_ha ?? u.predictedYield,
+            confidence: saved.confidence ?? u.confidence,
+            algorithm: saved.algorithm ?? undefined,
+          };
+          setPredictions((prev) => prev.map((x) => (x.id === id ? reconciled : x)));
+          setCurrent((c) => (c && c.id === id ? reconciled : c));
+          // A changed planting date or technique may have just made
+          // the backend recalculate this cropping's auto-generated
+          // care schedule (see farm_input.py's update_farm_input) —
+          // re-fetch so Calendar.tsx and WeekPlan.tsx (both read the
+          // same `tasks` list) pick up the new due dates right away,
+          // not just on the next full reload.
+          refreshTasks();
+          return reconciled;
+        })
+        .catch((err) => {
+          console.error("Failed to save cropping edits", err);
+          // Roll back the optimistic update — leaving it in place made
+          // an actual save failure look identical to success until the
+          // next reload silently revealed the server never got it.
+          // Surfacing the failure by throwing (instead of swallowing it
+          // behind a toast here) lets the caller — MyFarm.tsx's save()
+          // — keep its modal open and show a real error the person
+          // can't miss, rather than closing as if nothing went wrong.
+          if (previous) {
+            const revert = previous;
+            setPredictions((prev) => prev.map((x) => (x.id === id ? revert : x)));
+            setCurrent((c) => (c && c.id === id ? revert : c));
+          }
+          throw err;
+        });
     },
     setCurrent: (p) => {
       if (p && user && user.role !== "Admin" && p.ownerId !== user.id) return;

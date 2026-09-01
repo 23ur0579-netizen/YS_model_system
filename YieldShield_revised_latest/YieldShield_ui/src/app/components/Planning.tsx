@@ -330,7 +330,11 @@ function FieldPlan({ predictions }: { predictions: any[] }) {
       };
     }).sort((a, b) => b.score - a.score);
     if (!q.trim()) return list;
-    const t = q.toLowerCase();
+    // Same fix as AuditLog.tsx's search: trim the actual term used for
+    // matching, not just the "is this empty" check — otherwise a
+    // leading/trailing space in the query needs that exact same space
+    // in the same spot in the target text to match at all.
+    const t = q.trim().toLowerCase();
     return list.filter((r) => r.name.toLowerCase().includes(t) || r.farmer.toLowerCase().includes(t) || r.label.toLowerCase().includes(t));
   }, [fields, predictions, q]);
 

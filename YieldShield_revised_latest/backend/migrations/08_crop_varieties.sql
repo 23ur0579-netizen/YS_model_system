@@ -47,8 +47,18 @@ COMMENT ON TABLE yieldshield.crop_variety IS
   'NSIC/PhilRice-style variety reference catalog (maturity, yield potential, tolerances). Read-only reference data, loaded by etl_load.py — the app''s DataInput/Simulation "variety" field is currently free text and doesn''t enforce a match against this table.';
 
 -- Read-only reference data for the app, same access pattern as
--- crop_type/barangay/season/planting_technique.
-GRANT SELECT ON yieldshield.crop_variety TO yieldshield_app;
+-- crop_type/barangay/season/planting_technique. yieldshield_analyst
+-- was missed here originally — every other table relies on migration
+-- 02's blanket "future tables" default grant, but this table's own
+-- explicit grant list (needed for the app/etl split above) meant it
+-- never fell under that default. Confirmed missing the hard way: a
+-- read-only analyst-role query joining this table failed with
+-- "permission denied for table crop_variety" even though the role's
+-- whole purpose is read-only access across the schema. This is a
+-- plain reference catalog (variety names, no sensitive data — the
+-- same category as crop_type/barangay, which analyst already reads
+-- fine), so there's no reason it should've been narrower than those.
+GRANT SELECT ON yieldshield.crop_variety TO yieldshield_app, yieldshield_analyst;
 GRANT SELECT, INSERT, UPDATE ON yieldshield.crop_variety TO yieldshield_etl;
 GRANT USAGE, SELECT ON yieldshield.crop_variety_variety_id_seq TO yieldshield_etl;
 

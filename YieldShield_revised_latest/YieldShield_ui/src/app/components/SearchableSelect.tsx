@@ -46,7 +46,12 @@ export function SearchableSelect({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q));
+    // Matches against the subtitle too (category/grain type/maturity),
+    // not just the bare name — that text is right there on screen for
+    // every option, so typing e.g. "hybrid" to narrow down to hybrid
+    // varieties is a reasonable thing to expect to work, not just an
+    // exact-name lookup.
+    return options.filter((o) => o.label.toLowerCase().includes(q) || (o.subtitle ?? "").toLowerCase().includes(q));
   }, [options, query]);
 
   const selected = options.find((o) => o.value === value);
