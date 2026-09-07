@@ -36,7 +36,7 @@ def _notify(cur, user_id: int, category: str, title: str, body_text: str, barang
     )
 
 _SELECT_SQL = """
-    SELECT sd.distribution_id, ct.crop_name, b.barangay_name, sd.ecosystem, sd.seed_type,
+    SELECT sd.distribution_id, ct.crop_name, b.barangay_name, sd.seed_type,
            sd.quantity_kg, sd.beneficiary_count, sd.scheduled_date, sd.distributed_date,
            sd.status, sd.notes, sd.updated_at, u.full_name AS created_by_name
       FROM yieldshield.seed_distribution sd
@@ -45,16 +45,6 @@ _SELECT_SQL = """
       LEFT JOIN yieldshield.user_account u ON u.user_id = sd.created_by
 """
 
-# Office guideline: hybrid targets irrigated areas, either certified
-# (Tagged CS) category targets rainfed areas. A row that departs from
-# this — most commonly a rainfed barangay still requesting hybrid for
-# its higher yield potential — is allowed; onGuideline just flags it
-# for the coordinator so it isn't a silent surprise on the tally.
-def _on_guideline(ecosystem: str, seed_type: str) -> bool:
-    if seed_type == "Hybrid":
-        return ecosystem == "Irrigated"
-    return ecosystem == "Rainfed"
-
 
 def _to_out(row) -> SeedDistributionOut:
     crop_label = "Palay (Rice)" if row["crop_name"] == "Palay" else "Corn"
@@ -62,7 +52,6 @@ def _to_out(row) -> SeedDistributionOut:
         id=str(row["distribution_id"]),
         crop=crop_label,
         barangay=row["barangay_name"],
-        ecosystem=row["ecosystem"],
         seedType=row["seed_type"],
         quantityKg=float(row["quantity_kg"]),
         beneficiaryCount=row["beneficiary_count"],
@@ -70,7 +59,6 @@ def _to_out(row) -> SeedDistributionOut:
         distributedDate=row["distributed_date"].isoformat() if row["distributed_date"] else None,
         status=row["status"],
         notes=row["notes"] or "",
-        onGuideline=_on_guideline(row["ecosystem"], row["seed_type"]),
         createdBy=row["created_by_name"],
         updatedAt=int(row["updated_at"].timestamp() * 1000),
     )
@@ -157,20 +145,20 @@ def create_seed_distribution(body: SeedDistributionCreateRequest, user: CurrentU
             cur.execute(
                 """
                 INSERT INTO yieldshield.seed_distribution
-                    (crop_type_id, barangay_id, ecosystem, seed_type, quantity_kg,
+                    (crop_type_id, barangay_id, seed_type, quantity_kg,
                      beneficiary_count, scheduled_date, notes, created_by, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING distribution_id
                 """,
                 (
-                    crop_type_id, barangay_id, body.ecosystem, body.seed_type, body.quantity_kg,
+                    crop_type_id, barangay_id, body.seed_type, body.quantity_kg,
                     body.beneficiary_count, body.scheduled_date, body.notes, user.user_id, user.user_id,
                 ),
             )
             new_id = cur.fetchone()["distribution_id"]
             write_audit(
                 cur, user, "seed_distribution",
-                f"Scheduled {body.quantity_kg:g} kg of {body.seed_type} seed for {body.barangay} ({body.ecosystem})",
+                f"Scheduled {body.quantity_kg:g} kg of {body.seed_type} seed for {body.barangay}",
                 body.barangay,
             )
 
@@ -237,8 +225,6 @@ def update_seed_distribution(
             _require_crop_scope(user, "Palay (Rice)" if existing["crop_name"] == "Palay" else "Corn")
 
             fields, values = [], []
-            if body.ecosystem is not None:
-                fields.append("ecosystem = %s"); values.append(body.ecosystem)
             if body.seed_type is not None:
                 fields.append("seed_type = %s"); values.append(body.seed_type)
             if body.quantity_kg is not None:

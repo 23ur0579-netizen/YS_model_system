@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Leaf, TrendingUp, Droplets, Sun, Star } from "lucide-react";
-import { useStore } from "../store";
+import { useStore, moisturePctToMm } from "../store";
 import { toast } from "sonner";
 import { useT } from "../i18n";
 import { YieldValue } from "./UnitValue";
@@ -59,7 +59,7 @@ export function CropRecommendation() {
         <div>
           <div className="text-slate-900">{t("crop.bestFor")} {p?.plotId ?? t("crop.yourPlot")}</div>
           <div className="text-sm text-slate-500 mt-1">
-            {t("crop.rankedBy")} {p?.ph ?? 6.6}, {p?.moisture ?? 68}% {t("crop.moistureAnd")} {(p?.barangay ?? "Poblacion").replace(/([a-z])([A-Z])/g, "$1 $2")}, Binalonan.
+            {t("crop.rankedBy")} {p?.ph ?? 6.6}, {moisturePctToMm(p?.moisture ?? 68)}mm {t("crop.moistureAnd")} {(p?.barangay ?? "Poblacion").replace(/([a-z])([A-Z])/g, "$1 $2")}, Binalonan.
           </div>
         </div>
         <div className="flex items-center gap-2">

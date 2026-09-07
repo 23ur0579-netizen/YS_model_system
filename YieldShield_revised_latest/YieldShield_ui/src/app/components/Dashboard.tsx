@@ -10,7 +10,7 @@ import {
   CartesianGrid,
   Line,
 } from "recharts";
-import { useStore, AnnouncementTag, adminCrop } from "../store";
+import { useStore, AnnouncementTag, adminCrop, moisturePctToMm, municipalityAvgMoistureMm } from "../store";
 import { useT } from "../i18n";
 import { toast } from "sonner";
 import { pagasaRainfallCategory } from "../lib/pagasaWeather";
@@ -161,7 +161,7 @@ const TAG_META: Record<AnnouncementTag, { icon: any; chip: string }> = {
 };
 
 export function Dashboard() {
-  const { visiblePredictions, setCurrent, setView, user, announcements, users, weather, weatherError } = useStore();
+  const { predictions, visiblePredictions, setCurrent, setView, user, announcements, users, weather, weatherError } = useStore();
   const t = useT();
   const isAdmin = user?.role === "Admin";
   // Corn/Palay-assigned admins are locked to their crop — same
@@ -189,9 +189,17 @@ export function Dashboard() {
     ? scopedPredictions.reduce((s, p) => s + p.predictedYield, 0) / scopedPredictions.length
     : 0;
 
-  const avgMoisture = scopedPredictions.length
-    ? Math.round(scopedPredictions.reduce((s, p) => s + p.moisture, 0) / scopedPredictions.length)
+  // Shown as an absolute mm figure (available water in the root zone)
+  // rather than a bare percentage, alongside the town-wide average so a
+  // farmer can see at a glance whether they're above or below it.
+  const avgMoistureMm = scopedPredictions.length
+    ? moisturePctToMm(scopedPredictions.reduce((s, p) => s + p.moisture, 0) / scopedPredictions.length)
     : null;
+  const townAvgMoistureMm = municipalityAvgMoistureMm(predictions);
+  const moistureVsTown =
+    avgMoistureMm != null && townAvgMoistureMm != null
+      ? avgMoistureMm - townAvgMoistureMm
+      : null;
 
   // "All" means every registered farmer, crop or no crop — but once a
   // specific crop tab is picked, this should mean farmers actually
@@ -294,8 +302,15 @@ export function Dashboard() {
         />
         <Stat
           label={t("dash.moisture")}
-          value={avgMoisture != null ? String(avgMoisture) : "—"}
-          unit={avgMoisture != null ? "%" : ""}
+          value={avgMoistureMm != null ? String(avgMoistureMm) : "—"}
+          unit={avgMoistureMm != null ? "mm" : ""}
+          sub={
+            moistureVsTown != null
+              ? moistureVsTown === 0
+                ? "= town avg"
+                : `${moistureVsTown > 0 ? "↑" : "↓"} ${Math.abs(moistureVsTown)}mm vs. town avg`
+              : undefined
+          }
           icon={Droplets}
           tint="bg-sky-50 text-sky-600"
         />
@@ -319,7 +334,7 @@ export function Dashboard() {
             </div>
             <div className="flex items-center gap-3 text-xs">
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {t("dash.actual")}</span>
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-300" /> {t("dash.predicted")}</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-blue-500" /> {t("dash.predicted")}</span>
             </div>
           </div>
           <div className="h-64">
@@ -335,8 +350,8 @@ export function Dashboard() {
                   <XAxis dataKey="m" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
                   <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
                   <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0" }} />
-                  <Area type="monotone" dataKey="actual" stroke="#10b981" strokeWidth={2.5} fill="#10b981" fillOpacity={0.18} connectNulls={false} />
-                  <Line type="monotone" dataKey="predicted" stroke="#34d399" strokeWidth={2} strokeDasharray="4 4" dot={false} />
+                  <Area type="monotone" dataKey="actual" stroke="#22C55E" strokeWidth={2.5} fill="#22C55E" fillOpacity={0.18} connectNulls={false} />
+                  <Line type="monotone" dataKey="predicted" stroke="#3B82F6" strokeWidth={2} strokeDasharray="4 4" dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Sprout, Plus, X, Loader2, Trash2, Pencil, AlertTriangle, CheckCircle2, Package, Wheat } from "lucide-react";
+import { Sprout, Plus, X, Loader2, Trash2, Pencil, CheckCircle2, Package, Wheat } from "lucide-react";
 import { useStore, adminCrop, keyToLabel, labelToKey } from "../store";
 import { BARANGAY_DATA } from "../data/binalonan";
 import * as api from "../lib/api";
@@ -22,18 +22,6 @@ function labelFor(key: string) {
 }
 function fmtDate(d: string) {
   return new Date(`${d}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-}
-// Office guideline: hybrid seed targets irrigated areas, either
-// certified (Tagged CS) category targets rainfed areas. Departing
-// from this is allowed — most often a rainfed barangay still wanting
-// hybrid for its higher yield — so this only ever informs, never blocks.
-function offGuidelineNote(ecosystem: string, seedType: string): string | null {
-  if (!ecosystem || !seedType) return null;
-  const expected = seedType === "Hybrid" ? "Irrigated" : "Rainfed";
-  if (ecosystem === expected) return null;
-  return seedType === "Hybrid"
-    ? "Hybrid seed for a Rainfed barangay — off the usual guideline (hybrid is normally for irrigated areas). Some farmers request it anyway for its higher yield; this just flags it for visibility."
-    : "Certified/tagged seed for an Irrigated barangay — off the usual guideline (certified seed is normally for rainfed areas), but not a problem.";
 }
 
 const selectCls = "h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-700 bg-white";
@@ -89,16 +77,15 @@ export function SeedDistribution() {
   // (the real "tally"); scheduled-but-not-yet-out is shown alongside
   // so it's never mistaken for stock already delivered.
   const tally = useMemo(() => {
-    const map: Record<string, { distributedKg: number; scheduledKg: number; beneficiaries: number; exceptions: number }> = {};
+    const map: Record<string, { distributedKg: number; scheduledKg: number; beneficiaries: number }> = {};
     for (const r of records) {
-      const t = map[r.barangay] ?? (map[r.barangay] = { distributedKg: 0, scheduledKg: 0, beneficiaries: 0, exceptions: 0 });
+      const t = map[r.barangay] ?? (map[r.barangay] = { distributedKg: 0, scheduledKg: 0, beneficiaries: 0 });
       if (r.status === "Distributed") {
         t.distributedKg += r.quantityKg;
         t.beneficiaries += r.beneficiaryCount ?? 0;
       } else if (r.status === "Scheduled") {
         t.scheduledKg += r.quantityKg;
       }
-      if (!r.onGuideline && r.status !== "Cancelled") t.exceptions += 1;
     }
     return map;
   }, [records]);
@@ -187,7 +174,6 @@ export function SeedDistribution() {
                   <th className="px-5 py-2.5 font-normal">Distributed (kg)</th>
                   <th className="px-5 py-2.5 font-normal">Scheduled, pending (kg)</th>
                   <th className="px-5 py-2.5 font-normal">Farmer-beneficiaries</th>
-                  <th className="px-5 py-2.5 font-normal">Exceptions</th>
                 </tr>
               </thead>
               <tbody>
@@ -199,15 +185,6 @@ export function SeedDistribution() {
                       <td className="px-5 py-2.5 text-slate-600">{t.distributedKg.toLocaleString()} kg</td>
                       <td className="px-5 py-2.5 text-slate-500">{t.scheduledKg.toLocaleString()} kg</td>
                       <td className="px-5 py-2.5 text-slate-600">{t.beneficiaries}</td>
-                      <td className="px-5 py-2.5">
-                        {t.exceptions > 0 ? (
-                          <span className="inline-flex items-center gap-1 text-amber-700">
-                            <AlertTriangle className="h-3.5 w-3.5" /> {t.exceptions}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
                     </tr>
                   ))}
               </tbody>
@@ -232,7 +209,6 @@ export function SeedDistribution() {
               <thead>
                 <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
                   <th className="px-5 py-2.5 font-normal">Barangay</th>
-                  <th className="px-5 py-2.5 font-normal">Ecosystem</th>
                   <th className="px-5 py-2.5 font-normal">Seed type</th>
                   <th className="px-5 py-2.5 font-normal">Qty (kg)</th>
                   <th className="px-5 py-2.5 font-normal">Farmers</th>
@@ -245,17 +221,7 @@ export function SeedDistribution() {
                 {filtered.map((r) => (
                   <tr key={r.id} className="border-b border-slate-50 last:border-0 align-top">
                     <td className="px-5 py-3 text-slate-800">{labelFor(r.barangay)}</td>
-                    <td className="px-5 py-3 text-slate-600">{r.ecosystem}</td>
-                    <td className="px-5 py-3 text-slate-600">
-                      <div className="flex items-center gap-1.5">
-                        {r.seedType}
-                        {!r.onGuideline && (
-                          <span title="Off the usual guideline (hybrid->irrigated, certified->rainfed) — allowed, flagged for visibility.">
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                          </span>
-                        )}
-                      </div>
-                    </td>
+                    <td className="px-5 py-3 text-slate-600">{r.seedType}</td>
                     <td className="px-5 py-3 text-slate-600">{r.quantityKg.toLocaleString()}</td>
                     <td className="px-5 py-3 text-slate-600">{r.beneficiaryCount ?? "—"}</td>
                     <td className="px-5 py-3 text-slate-500">{fmtDate(r.scheduledDate)}</td>
@@ -322,7 +288,6 @@ function ScheduleModal({
   const [form, setForm] = useState({
     crop: existing?.crop ?? lockedCrop ?? ("Palay (Rice)" as "Palay (Rice)" | "Corn"),
     barangay: existing?.barangay ?? barangayOptions[0],
-    ecosystem: existing?.ecosystem ?? ("Irrigated" as "Irrigated" | "Rainfed"),
     seedType: existing?.seedType ?? ("Hybrid" as api.SeedDistSeedType),
     quantityKg: existing ? String(existing.quantityKg) : "",
     beneficiaryCount: existing?.beneficiaryCount != null ? String(existing.beneficiaryCount) : "",
@@ -340,7 +305,6 @@ function ScheduleModal({
     try {
       if (existing) {
         const updated = await api.updateSeedDistribution(existing.id, {
-          ecosystem: form.ecosystem,
           seed_type: form.seedType,
           quantity_kg: qty,
           beneficiary_count: form.beneficiaryCount ? parseInt(form.beneficiaryCount, 10) : undefined,
@@ -356,7 +320,6 @@ function ScheduleModal({
         const created = await api.createSeedDistribution({
           crop: form.crop,
           barangay: keyToLabel(form.barangay),
-          ecosystem: form.ecosystem,
           seed_type: form.seedType,
           quantity_kg: qty,
           beneficiary_count: form.beneficiaryCount ? parseInt(form.beneficiaryCount, 10) : undefined,
@@ -372,8 +335,6 @@ function ScheduleModal({
       setSaving(false);
     }
   }
-
-  const note = offGuidelineNote(form.ecosystem, form.seedType);
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -420,30 +381,14 @@ function ScheduleModal({
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <div className="text-sm text-slate-700 mb-1.5">Ecosystem</div>
-              <select value={form.ecosystem} onChange={(e) => set("ecosystem", e.target.value)} className={`${inputCls} appearance-none`}>
-                <option value="Irrigated">Irrigated</option>
-                <option value="Rainfed">Rainfed</option>
-              </select>
-            </label>
-            <label className="block">
-              <div className="text-sm text-slate-700 mb-1.5">Seed type</div>
-              <select value={form.seedType} onChange={(e) => set("seedType", e.target.value)} className={`${inputCls} appearance-none`}>
-                {DA_SEED_TYPES.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {note && (
-            <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-              <span>{note}</span>
-            </div>
-          )}
+          <label className="block">
+            <div className="text-sm text-slate-700 mb-1.5">Seed type</div>
+            <select value={form.seedType} onChange={(e) => set("seedType", e.target.value)} className={`${inputCls} appearance-none`}>
+              {DA_SEED_TYPES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </label>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block">

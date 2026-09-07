@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Sparkles, Download, Share2, AlertTriangle, CheckCircle2, Inbox, Wheat, Pencil, Loader2 } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { useStore } from "../store";
+import { useStore, moisturePctToMm } from "../store";
 import { toast } from "sonner";
 import { useT } from "../i18n";
 import { YieldValue, AreaValue } from "./UnitValue";
@@ -195,7 +195,7 @@ export function YieldResult() {
 
   const factors = [
     { label: `${t("sim.soilPH")} (${p.ph})`, weight: Math.max(50, Math.min(98, Math.round(100 - Math.abs(p.ph - 6.4) * 20))) },
-    { label: `${t("sim.moisture")} (${p.moisture}%)`, weight: Math.max(45, Math.min(95, Math.round(100 - Math.abs(p.moisture - 62)))) },
+    { label: `${t("sim.moisture")} (${moisturePctToMm(p.moisture)}mm)`, weight: Math.max(45, Math.min(95, Math.round(100 - Math.abs(p.moisture - 62)))) },
     { label: `${t("yr.rainfallShort")} (${p.rainfall}mm)`, weight: Math.max(40, Math.min(95, Math.round(100 - Math.abs(p.rainfall - 145) / 3))) },
     { label: `${t("yr.temperatureShort")} (${p.temperature}°C)`, weight: Math.max(40, Math.min(95, Math.round(100 - Math.abs(p.temperature - 28) * 5))) },
     { label: t("yr.historicalYield"), weight: 82 },

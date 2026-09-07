@@ -385,7 +385,6 @@ class SeedDistributionOut(BaseModel):
     id: str
     crop: Literal["Palay (Rice)", "Corn"]
     barangay: str
-    ecosystem: Literal["Irrigated", "Rainfed"]
     seedType: SeedDistSeedType
     quantityKg: float
     beneficiaryCount: int | None = None
@@ -393,11 +392,6 @@ class SeedDistributionOut(BaseModel):
     distributedDate: str | None = None
     status: Literal["Scheduled", "Distributed", "Cancelled"]
     notes: str = ""
-    # True when seedType/ecosystem follows the office's own guideline
-    # (Hybrid->Irrigated, either Tagged CS->Rainfed) — False flags a
-    # deliberate exception (e.g. Hybrid requested in a Rainfed
-    # barangay), surfaced in the UI, never blocked.
-    onGuideline: bool
     createdBy: str | None = None
     updatedAt: int
 
@@ -405,7 +399,6 @@ class SeedDistributionOut(BaseModel):
 class SeedDistributionCreateRequest(BaseModel):
     crop: Literal["Palay (Rice)", "Corn"]
     barangay: str = Field(..., min_length=1, max_length=80)
-    ecosystem: Literal["Irrigated", "Rainfed"]
     seed_type: SeedDistSeedType
     quantity_kg: float = Field(..., gt=0)
     beneficiary_count: int | None = Field(None, ge=0)
@@ -414,7 +407,6 @@ class SeedDistributionCreateRequest(BaseModel):
 
 
 class SeedDistributionUpdateRequest(BaseModel):
-    ecosystem: Literal["Irrigated", "Rainfed"] | None = None
     seed_type: SeedDistSeedType | None = None
     quantity_kg: float | None = Field(None, gt=0)
     beneficiary_count: int | None = Field(None, ge=0)

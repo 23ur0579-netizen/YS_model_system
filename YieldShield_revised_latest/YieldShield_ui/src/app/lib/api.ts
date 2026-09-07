@@ -669,7 +669,6 @@ export type SeedDistribution = {
   id: string;
   crop: "Palay (Rice)" | "Corn";
   barangay: string;
-  ecosystem: "Irrigated" | "Rainfed";
   seedType: SeedDistSeedType;
   quantityKg: number;
   beneficiaryCount: number | null;
@@ -677,7 +676,6 @@ export type SeedDistribution = {
   distributedDate: string | null;
   status: "Scheduled" | "Distributed" | "Cancelled";
   notes: string;
-  onGuideline: boolean; // false = flagged exception, e.g. Hybrid seed sent to a Rainfed barangay
   createdBy: string | null;
   updatedAt: number;
 };
@@ -685,7 +683,6 @@ export type SeedDistribution = {
 export type SeedDistributionCreate = {
   crop: "Palay (Rice)" | "Corn";
   barangay: string;
-  ecosystem: "Irrigated" | "Rainfed";
   seed_type: SeedDistSeedType;
   quantity_kg: number;
   beneficiary_count?: number;
@@ -694,7 +691,6 @@ export type SeedDistributionCreate = {
 };
 
 export type SeedDistributionUpdate = Partial<{
-  ecosystem: "Irrigated" | "Rainfed";
   seed_type: SeedDistSeedType;
   quantity_kg: number;
   beneficiary_count: number;

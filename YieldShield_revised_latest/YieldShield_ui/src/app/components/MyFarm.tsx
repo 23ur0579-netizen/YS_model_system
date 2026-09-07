@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, ReactNode } from "react";
 import { Tractor, MapPin, Layers, TrendingUp, Leaf, CheckCircle2, Clock, Plus, FlaskConical, Droplets, ThermometerSun, CloudRain, Wheat, Loader2, BookOpen, Pencil, Sparkles, AlertTriangle, ChevronDown, Download, CalendarClock, X, Ruler, Trash2, LandPlot, Sprout, PlayCircle, Package, Info, Copy } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { useStore, Prediction, Field, plantingWindow, predictYield, adminCrop, remainingFieldArea } from "../store";
+import { useStore, Prediction, Field, plantingWindow, predictYield, adminCrop, remainingFieldArea, moisturePctToMm, municipalityAvgMoistureMm } from "../store";
 import { BARANGAY_FACTS, BARANGAY_DATA, getPlantingTechniques, seasonForMonth, techniqueLabel } from "../data/binalonan";
 import { toast } from "sonner";
 import { useT } from "../i18n";
@@ -58,6 +58,7 @@ function Stat({ label, value, highlight }: { label: string; value: ReactNode; hi
 
 function PlotDetail({ p }: { p: Prediction }) {
   const t = useT();
+  const { predictions } = useStore();
   const harvested = p.actualYield != null || !!p.harvestDate;
   const isPalay = p.crop === "Palay (Rice)";
   const [showPrediction, setShowPrediction] = useState(true);
@@ -66,6 +67,19 @@ function PlotDetail({ p }: { p: Prediction }) {
   const soilType = BARANGAY_FACTS[p.barangay]?.soilType ?? "Sandy Loam";
   const season = seasonForMonth(new Date(p.plantingDate).getMonth());
   const techniques = getPlantingTechniques(p.crop, { moisture: p.moisture, rainfall: p.rainfall, soilType }, season);
+
+  // Displayed as an absolute mm figure (available water in the root
+  // zone) with town-wide average context, rather than a bare percentage
+  // that's hard to act on for irrigation planning.
+  const moistureMm = moisturePctToMm(p.moisture);
+  const townAvgMoistureMm = municipalityAvgMoistureMm(predictions);
+  const moistureVsTown = townAvgMoistureMm != null ? moistureMm - townAvgMoistureMm : null;
+  const moistureSub =
+    moistureVsTown != null
+      ? moistureVsTown === 0
+        ? `= municipality avg (${townAvgMoistureMm}mm)`
+        : `${moistureVsTown > 0 ? "↑" : "↓"} ${Math.abs(moistureVsTown)}mm vs. municipality avg (${townAvgMoistureMm}mm)`
+      : undefined;
 
   return (
     <div className="space-y-5">
@@ -134,7 +148,7 @@ function PlotDetail({ p }: { p: Prediction }) {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <EnvCell icon={<FlaskConical className="h-3.5 w-3.5 text-emerald-600" />} label="Soil pH" value={String(p.ph)} />
-            <EnvCell icon={<Droplets className="h-3.5 w-3.5 text-sky-600" />} label="Moisture" value={`${p.moisture}%`} />
+            <EnvCell icon={<Droplets className="h-3.5 w-3.5 text-sky-600" />} label="Moisture" value={`${moistureMm}mm`} sub={moistureSub} />
             <EnvCell icon={<ThermometerSun className="h-3.5 w-3.5 text-amber-600" />} label="Temperature" value={`${p.temperature}°C`} />
             <EnvCell icon={<CloudRain className="h-3.5 w-3.5 text-sky-700" />} label="Rainfall" value={`${p.rainfall} mm`} />
           </div>
@@ -249,7 +263,7 @@ function EmbeddedPrediction({ p }: { p: Prediction }) {
   const factors = [
     { label: `Planting window (${plantedMonth})`, weight: Math.round(pw.score * 100) },
     { label: `Soil pH (${p.ph})`, weight: Math.max(50, Math.min(98, Math.round(100 - Math.abs(p.ph - 6.4) * 20))) },
-    { label: `Moisture (${p.moisture}%)`, weight: Math.max(45, Math.min(95, Math.round(100 - Math.abs(p.moisture - 62)))) },
+    { label: `Moisture (${moisturePctToMm(p.moisture)}mm)`, weight: Math.max(45, Math.min(95, Math.round(100 - Math.abs(p.moisture - 62)))) },
     { label: `Rainfall (${p.rainfall}mm)`, weight: Math.max(40, Math.min(95, Math.round(100 - Math.abs(p.rainfall - 145) / 3))) },
     { label: `Temperature (${p.temperature}°C)`, weight: Math.max(40, Math.min(95, Math.round(100 - Math.abs(p.temperature - 28) * 5))) },
   ];
@@ -566,11 +580,12 @@ function HStat({ label, value, highlight, tone }: { label: string; value: React.
   );
 }
 
-function EnvCell({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function EnvCell({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5">
       <div className="text-xs text-slate-500 flex items-center gap-1.5">{icon}{label}</div>
       <div className="mt-1 text-slate-800 text-sm">{value}</div>
+      {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import {
   MapPin, CalendarDays, Droplets, ThermometerSun, FlaskConical, CloudRain, LandPlot,
   Ruler, Sprout, Wheat, Leaf, TrendingUp, Gauge, RotateCcw, UserCheck, Info, BookOpen,
 } from "lucide-react";
-import { useStore, predictYield, plantingWindow, adminCrop } from "../store";
+import { useStore, predictYield, plantingWindow, adminCrop, moisturePctToMm } from "../store";
 import { BARANGAY_DATA, getPlantingTechniques, seasonForMonth, Season, techniqueLabel } from "../data/binalonan";
 import { useT } from "../i18n";
 import { AreaUnit, SeedRateUnit, AREA_UNITS, SEED_RATE_UNITS, toHectares, toKgPerHa, formatAreaValue, formatSeedRateValue } from "../lib/units";
@@ -365,7 +365,7 @@ export function Simulation() {
             <FactorRow label={tr("sim.cropDistance")} value={`${form.spacing} cm`} good={Math.abs(form.spacing - (form.crop === "Corn" ? 25 : 20)) <= 5} />
             <FactorRow label={tr("sim.technique")} value={form.technique ? techniqueLabel(tr, form.technique) : tr("sim.notSet")} good={!!form.technique} />
             <FactorRow label={tr("sim.soilPH")} value={String(form.ph)} good={Math.abs(form.ph - 6.4) <= 0.5} />
-            <FactorRow label={tr("sim.moisture")} value={`${form.moisture}%`} good={form.moisture >= (form.crop === "Corn" ? 45 : 55)} />
+            <FactorRow label={tr("sim.moisture")} value={`${moisturePctToMm(form.moisture)}mm`} good={form.moisture >= (form.crop === "Corn" ? 45 : 55)} />
           </div>
 
           <div className="bg-white border border-slate-100 rounded-2xl p-4">

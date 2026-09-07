@@ -106,6 +106,29 @@ export type Prediction = {
   filedByStaff?: boolean;
 };
 
+// Soil moisture is captured (and still stored/scored internally) as a
+// 0-100 volumetric percentage, but a bare "%" isn't something a farmer
+// can act on. Converting to an absolute available-water figure — the
+// depth of water the root zone is holding — lets it be read the same
+// way rainfall already is ("how many mm"), which is what irrigation
+// decisions actually run on. 300mm approximates the effective root
+// zone depth for lowland rice/corn in this municipality.
+export const SOIL_ROOT_ZONE_MM = 300;
+
+export function moisturePctToMm(pct: number): number {
+  return Math.round((pct / 100) * SOIL_ROOT_ZONE_MM);
+}
+
+// Municipality-wide average soil moisture, in mm, computed from every
+// prediction town-wide (not just whatever subset is currently visible/
+// scoped to one farmer or crop) — used to give a farmer's own reading
+// "vs. the town" context.
+export function municipalityAvgMoistureMm(allPredictions: Prediction[]): number | null {
+  if (!allPredictions.length) return null;
+  const avgPct = allPredictions.reduce((s, p) => s + p.moisture, 0) / allPredictions.length;
+  return moisturePctToMm(avgPct);
+}
+
 // A physical field a farmer owns. A field can host many cropping periods
 // (each Prediction with a matching fieldId is one cropping cycle).
 export type Field = {
