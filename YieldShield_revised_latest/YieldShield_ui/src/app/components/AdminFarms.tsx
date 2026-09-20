@@ -22,6 +22,32 @@ function fmt(d: Date | string) {
 function avatarInitials(name: string) {
   return name.split(" ").map((p) => p[0]).join("").slice(0, 2).toUpperCase();
 }
+// Palay/Corn planting season label for a cropping's planting date —
+// Wet Jun-Nov, Dry Dec-May (matches data/binalonan.ts's seasonForMonth),
+// spanning the turn of the year for Dry so "Dec 2026" and "Feb 2027"
+// group together as the same season instead of splitting across years.
+function seasonLabelFor(dateStr: string): string {
+  const d = new Date(dateStr);
+  const m = d.getMonth();
+  const y = d.getFullYear();
+  if (m >= 5 && m <= 10) return `Wet ${y}`;
+  if (m === 11) return `Dry ${y}\u2013${y + 1}`;
+  return `Dry ${y - 1}\u2013${y}`;
+}
+// Groups a field's croppings by season, most recent season first —
+// within a season, croppings keep the newest-first order they already
+// arrive in.
+function groupBySeason(crops: Prediction[]): { season: string; crops: Prediction[] }[] {
+  const groups = new Map<string, Prediction[]>();
+  for (const p of crops) {
+    const label = seasonLabelFor(p.plantingDate);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label)!.push(p);
+  }
+  return [...groups.entries()]
+    .map(([season, crops]) => ({ season, crops }))
+    .sort((a, b) => b.crops[0].plantingDate.localeCompare(a.crops[0].plantingDate));
+}
 
 export function AdminFarms() {
   const { predictions, fields, setCurrent, setView, user } = useStore();
@@ -294,36 +320,47 @@ export function AdminFarms() {
                             <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${fieldOpen ? "" : "-rotate-90"}`} />
                           </div>
 
-                          {/* Croppings within this field */}
+                          {/* Croppings within this field — grouped per
+                              season (Wet/Dry) so an admin scanning a
+                              field with a long planting history isn't
+                              looking at one flat, undated-looking list. */}
                           {fieldOpen && (
-                            <div className="pl-[52px] pr-4 pb-3 space-y-1 bg-slate-50/50">
-                              {crops.map((p) => {
-                                const est = addDays(p.plantingDate, maturityDays(p.crop, p.variety));
-                                const harvested = p.actualYield != null || !!p.harvestDate;
-                                return (
-                                  <button
-                                    key={p.id}
-                                    onClick={() => openFarm(p)}
-                                    className="w-full rounded-lg px-3 py-2.5 flex items-center justify-between gap-3 text-left bg-white hover:bg-emerald-50/50 border border-slate-100"
-                                  >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      {p.crop === "Corn" ? <Wheat className="h-3.5 w-3.5 text-amber-600 shrink-0" /> : <Leaf className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
-                                      <span className="text-sm text-slate-700">{p.crop === "Corn" ? "Corn" : "Palay"}</span>
-                                      <span className="text-xs text-slate-400 truncate">
-                                        Planted {fmt(p.plantingDate)}
-                                        {harvested && p.harvestDate ? ` · Harvested ${fmt(p.harvestDate)}` : !harvested ? ` · Est. ${fmt(est)}` : ""}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      <TrendingUp className="h-3 w-3 text-slate-400" />
-                                      <span className="text-sm text-slate-800">
-                                        <YieldValue valueTHa={harvested && p.actualYield != null ? p.actualYield : p.predictedYield} />
-                                      </span>
-                                      <span className="text-[11px] text-slate-400">{harvested ? "actual" : "predicted"}</span>
-                                    </div>
-                                  </button>
-                                );
-                              })}
+                            <div className="pl-[52px] pr-4 pb-3 space-y-3 bg-slate-50/50">
+                              {groupBySeason(crops).map(({ season, crops: seasonCrops }) => (
+                                <div key={season} className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-slate-400 px-1 pt-2 flex items-center gap-1.5">
+                                    <span className={`h-1.5 w-1.5 rounded-full ${season.startsWith("Wet") ? "bg-sky-400" : "bg-amber-400"}`} />
+                                    {season} · {seasonCrops.length} cropping{seasonCrops.length === 1 ? "" : "s"}
+                                  </div>
+                                  {seasonCrops.map((p) => {
+                                    const est = addDays(p.plantingDate, maturityDays(p.crop, p.variety));
+                                    const harvested = p.actualYield != null || !!p.harvestDate;
+                                    return (
+                                      <button
+                                        key={p.id}
+                                        onClick={() => openFarm(p)}
+                                        className="w-full rounded-lg px-3 py-2.5 flex items-center justify-between gap-3 text-left bg-white hover:bg-emerald-50/50 border border-slate-100"
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          {p.crop === "Corn" ? <Wheat className="h-3.5 w-3.5 text-amber-600 shrink-0" /> : <Leaf className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                                          <span className="text-sm text-slate-700">{p.name || (p.crop === "Corn" ? "Corn" : "Palay")}</span>
+                                          <span className="text-xs text-slate-400 truncate">
+                                            Planted {fmt(p.plantingDate)}
+                                            {harvested && p.harvestDate ? ` · Harvested ${fmt(p.harvestDate)}` : !harvested ? ` · Est. ${fmt(est)}` : ""}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          <TrendingUp className="h-3 w-3 text-slate-400" />
+                                          <span className="text-sm text-slate-800">
+                                            <YieldValue valueTHa={harvested && p.actualYield != null ? p.actualYield : p.predictedYield} />
+                                          </span>
+                                          <span className="text-[11px] text-slate-400">{harvested ? "actual" : "predicted"}</span>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -337,7 +374,7 @@ export function AdminFarms() {
       </div>
 
       {pickerOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" onClick={() => setPickerOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPickerOpen(false)}>
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
               <div className="text-slate-900">Select a farm</div>

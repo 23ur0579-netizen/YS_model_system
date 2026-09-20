@@ -28,13 +28,17 @@ class Settings:
     JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "480"))
     RESET_TOKEN_EXPIRE_MINUTES = int(os.environ.get("RESET_TOKEN_EXPIRE_MINUTES", "30"))
 
-    # --- Outbound email (SMTP) ---
-    SMTP_HOST = os.environ.get("SMTP_HOST", "")
-    SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-    SMTP_USER = os.environ.get("SMTP_USER", "")
-    SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-    SMTP_FROM = os.environ.get("SMTP_FROM", "yield.shield1@gmail.com")
-    SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
+    # --- Outbound email (Brevo transactional email REST API) ---
+    # Switched from raw SMTP: SMTP ports (25/465/587) are very commonly
+    # blocked by campus/venue wifi and mobile hotspots (this is what
+    # broke email during the live presentation), while this HTTPS API
+    # call goes out on port 443 like any normal web request. Free tier:
+    # 300 emails/day, no credit card, no expiry — https://app.brevo.com
+    # (Settings -> SMTP & API -> API Keys). The sender email/name must
+    # be a verified sender in that same Brevo account.
+    BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+    EMAIL_FROM = os.environ.get("EMAIL_FROM", "yield.shield1@gmail.com")
+    EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "YieldShield")
 
     # Base URL of the deployed frontend, used to build the reset link,
     # e.g. https://app.yieldsh.ph -> https://app.yieldsh.ph/reset-password?token=...
@@ -53,6 +57,21 @@ class Settings:
 
     # --- CORS ---
     CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+
+    # --- ML retraining (POST /admin/model/retrain, master/verification
+    # admins only — see app/ml_retrain.py) ---
+    # Path to the YieldShield_ML project (the R pipeline), relative to
+    # this backend's own working directory by default — override if
+    # it's deployed somewhere else on the same machine. Retraining
+    # shells out to Rscript here, so this only works when R and the
+    # pipeline's R packages are installed on the same host as this API.
+    ML_DIR = os.environ.get("YIELDSHIELD_ML_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "..", "YieldShield_ML"))
+    RSCRIPT_BIN = os.environ.get("RSCRIPT_BIN", "Rscript")
+    # Generous ceiling per Rscript call (data extraction, then the full
+    # 01-10 pipeline) — training on a small municipal dataset shouldn't
+    # come close to this, but a genuinely stuck R process shouldn't be
+    # able to tie up the retrain slot forever either.
+    ML_RETRAIN_TIMEOUT_SECONDS = int(os.environ.get("YIELDSHIELD_ML_RETRAIN_TIMEOUT_SECONDS", str(30 * 60)))
 
     def validate(self):
         _required_at_startup = ["JWT_SECRET", "PGPASSWORD"]

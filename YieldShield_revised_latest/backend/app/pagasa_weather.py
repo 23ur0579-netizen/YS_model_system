@@ -10,12 +10,17 @@ YieldShield_ui/src/app/lib/pagasaWeather.ts.
 """
 
 
-def rainfall_category(mm_per_day: float) -> tuple[str, str]:
-    """Returns (label, advice) -- advice is "" for light/moderate rain."""
+def rainfall_category(mm_per_day: float) -> tuple[str, str, str]:
+    """Returns (level, label_en, advice_en). level is a stable code —
+    "light"/"moderate"/"heavy"/"torrential" — for callers doing
+    key-based i18n (see notifications.py's _weather_advisory);
+    label_en/advice_en are an English fallback for callers that
+    haven't been converted yet (farm_calendar.py's activity notes).
+    advice_en is "" for light/moderate rain."""
     if mm_per_day < 5:
-        return "Light rain", ""
+        return "light", "Light rain", ""
     if mm_per_day < 15:
-        return "Moderate rain", ""
+        return "moderate", "Moderate rain", ""
     if mm_per_day < 30:
-        return "Heavy rain", "Watch for localized flooding and slippery field conditions."
-    return "Intense to torrential rain", "High risk of flooding -- secure equipment and delay fieldwork."
+        return "heavy", "Heavy rain", "Watch for localized flooding and slippery field conditions."
+    return "torrential", "Intense to torrential rain", "High risk of flooding -- secure equipment and delay fieldwork."

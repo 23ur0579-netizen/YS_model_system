@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   MapPin, CalendarDays, Droplets, ThermometerSun, FlaskConical, CloudRain, LandPlot,
-  Ruler, Sprout, Wheat, Leaf, TrendingUp, Gauge, RotateCcw, UserCheck, Info, BookOpen,
+  Ruler, Sprout, Wheat, Leaf, TrendingUp, Gauge, RotateCcw, UserCheck, Info, BookOpen, Plus, X,
 } from "lucide-react";
 import { useStore, predictYield, plantingWindow, adminCrop, moisturePctToMm } from "../store";
 import { BARANGAY_DATA, getPlantingTechniques, seasonForMonth, Season, techniqueLabel } from "../data/binalonan";
@@ -9,11 +9,12 @@ import { useT } from "../i18n";
 import { AreaUnit, SeedRateUnit, AREA_UNITS, SEED_RATE_UNITS, toHectares, toKgPerHa, formatAreaValue, formatSeedRateValue } from "../lib/units";
 import { YieldValue, AreaValue } from "./UnitValue";
 import { SearchableSelect, SearchableOption } from "./SearchableSelect";
+import { VarietyCompareModal } from "./VarietyCompare";
 
 const inputCls =
   "w-full h-10 px-3 rounded-lg border border-slate-200 bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none text-sm";
 
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+function Field({ label, children, hint }: { label: React.ReactNode; children: React.ReactNode; hint?: string }) {
   return (
     <label className="block">
       <div className="text-sm text-slate-700 mb-1.5">{label}</div>
@@ -56,11 +57,12 @@ const VARIETY_PRODUCT_TYPE: Record<string, string> = {
   "Lagkitan (Traditional)": "Glutinous / Waxy Corn (for boiled corn, binatog, cornick — not feed corn)",
 };
 
-export function Simulation() {
+function SimulationPanel({ onRemove, panelLabel, compact }: { onRemove?: () => void; panelLabel?: string; compact?: boolean }) {
   const { user, cropVarieties } = useStore();
   const tr = useT();
   const only = adminCrop(user?.adminRole); // "Corn" | "Palay (Rice)" | "all" | "none"
   const lockedCrop = only === "Corn" || only === "Palay (Rice)";
+  const [compareOpen, setCompareOpen] = useState(false);
 
   const blank = {
     consultant: user?.name ?? "",
@@ -156,38 +158,39 @@ export function Simulation() {
   const totalYield = +(preview.yieldPerHa * form.area).toFixed(1);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8">
-      {/* Walk-in banner */}
-      <div className="max-w-7xl mb-5 flex items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50/70 px-5 py-4">
-        <div className="h-10 w-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
-          <UserCheck className="h-5 w-5" />
-        </div>
-        <div className="min-w-0">
-          <div className="text-sky-900">{tr("sim.bannerTitle")}</div>
-          <div className="text-sm text-sky-700/80 mt-0.5">
-            {tr("sim.bannerBody")}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-col lg:flex-row gap-6 items-start max-w-7xl">
+    <div className="w-full">
+      <div className={`flex ${compact ? "flex-col" : "flex-col lg:flex-row"} gap-6 items-start max-w-7xl`}>
         {/* ── Form ── */}
         <div className="flex-1 min-w-0 bg-white border border-slate-100 rounded-2xl overflow-hidden">
           <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
             <div>
-              <div className="text-slate-900">{tr("sim.inputsTitle")}</div>
+              <div className="text-slate-900 flex items-center gap-2">
+                {panelLabel && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{panelLabel}</span>}
+                {tr("sim.inputsTitle")}
+              </div>
               <div className="text-xs text-slate-500 mt-0.5">{tr("sim.inputsHint")}</div>
             </div>
-            <button
-              onClick={() => {
-                setForm(blank);
-                setAreaText(formatAreaValue(blank.area, areaUnit));
-                setSeedRateText(formatSeedRateValue(blank.seedRate, seedRateUnit));
-              }}
-              className="text-xs text-slate-600 hover:text-slate-900 flex items-center gap-1.5 h-8 px-3 rounded-lg border border-slate-200 hover:bg-slate-50"
-            >
-              <RotateCcw className="h-3.5 w-3.5" /> {tr("sim.reset")}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setForm(blank);
+                  setAreaText(formatAreaValue(blank.area, areaUnit));
+                  setSeedRateText(formatSeedRateValue(blank.seedRate, seedRateUnit));
+                }}
+                className="text-xs text-slate-600 hover:text-slate-900 flex items-center gap-1.5 h-8 px-3 rounded-lg border border-slate-200 hover:bg-slate-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> {tr("sim.reset")}
+              </button>
+              {onRemove && (
+                <button
+                  onClick={onRemove}
+                  title="Remove this comparison"
+                  className="h-8 w-8 rounded-lg border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-slate-400 flex items-center justify-center"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-5">
@@ -216,12 +219,25 @@ export function Simulation() {
                 <option value="Corn">{tr("common.crop.corn")}</option>
               </select>
             </Field>
-            <Field label={tr("sim.variety")}>
+            <Field label={
+              <div className="flex items-center justify-between">
+                <span>{tr("sim.variety")}</span>
+                <button
+                  type="button"
+                  onClick={() => setCompareOpen(true)}
+                  className="text-xs text-emerald-700 hover:text-emerald-800 flex items-center gap-1"
+                >
+                  <Plus className="h-3 w-3" /> Compare varieties
+                </button>
+              </div>
+            }>
               <SearchableSelect
                 value={form.variety}
                 onChange={(v) => set("variety", v)}
                 options={varietyOptions}
                 placeholder="Type to search a variety…"
+                allowCustom
+                customLabel={(q) => `Add "${q}" as a new variety`}
               />
               {selectedVarietyInfo ? (
                 <div className="text-xs text-slate-500 mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
@@ -339,8 +355,11 @@ export function Simulation() {
           </div>
         </div>
 
-        {/* ── Live result ── */}
-        <div className="w-full lg:w-80 shrink-0 space-y-3">
+        {/* ── Live result — floats/sticks alongside the form on desktop so
+            it stays visible while scrolling through a long simulation
+            form; on mobile it just sits inline (a fixed floating card
+            there would cover too much of a narrow screen). ── */}
+        <div className={compact ? "w-full shrink-0 space-y-3" : "w-full lg:w-80 shrink-0 space-y-3 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pb-2"}>
           <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 text-white p-5">
             <div className="flex items-center gap-2 text-emerald-100/90 text-sm">
               {form.crop === "Corn" ? <Wheat className="h-4 w-4" /> : <Leaf className="h-4 w-4" />} {tr("sim.simulatedYield")}
@@ -380,6 +399,7 @@ export function Simulation() {
           </div>
         </div>
       </div>
+      {compareOpen && <VarietyCompareModal onClose={() => setCompareOpen(false)} initialCrop={form.crop} />}
     </div>
   );
 }
@@ -389,6 +409,73 @@ function FactorRow({ label, value, good, note }: { label: string; value: string;
     <div className="flex items-center justify-between gap-2">
       <span className="text-xs text-slate-500">{label}{note ? ` · ${note}` : ""}</span>
       <span className={`text-xs px-2 py-0.5 rounded-full border ${good ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>{value}</span>
+    </div>
+  );
+}
+
+// Outer shell: the walk-in banner (shown once, not per comparison
+// panel), the compare-simulations trigger, and 1–2 independent
+// SimulationPanel instances stacked underneath. Each panel keeps its
+// own form/preview state entirely — this shell only tracks how many
+// are open, not their contents, so comparing never means reconciling
+// two panels' state against each other.
+export function Simulation() {
+  const tr = useT();
+  // This page is admin-only (see Sidebar.tsx's ADMIN_NAV — "simulation"
+  // isn't in FARMER_NAV), so the trigger button is always the labeled
+  // "Compare simulations" version; there's no separate farmer-facing
+  // variant of this page to design for.
+  const [comparing, setComparing] = useState(false);
+
+  return (
+    <div className="p-4 sm:p-6 lg:p-8">
+      {/* Walk-in banner */}
+      <div className="max-w-7xl mb-5 flex items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50/70 px-5 py-4">
+        <div className="h-10 w-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+          <UserCheck className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sky-900">{tr("sim.bannerTitle")}</div>
+          <div className="text-sm text-sky-700/80 mt-0.5">
+            {tr("sim.bannerBody")}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setComparing(true)}
+          title="Open two simulations side by side to compare"
+          className="shrink-0 flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-sm"
+        >
+          <Plus className="h-4 w-4" /> Compare simulations
+        </button>
+      </div>
+
+      <div className="max-w-7xl">
+        <SimulationPanel />
+      </div>
+
+      {/* Comparison — a true side-by-side modal overlay (two cards,
+          one shared backdrop), not a second panel inserted into the
+          page below the first — so comparing two setups never means
+          scrolling down to see the second one. */}
+      {comparing && (
+        <div className="fixed inset-0 z-50 flex flex-col lg:flex-row items-center justify-center gap-4 p-4 overflow-auto">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setComparing(false)} />
+          <button
+            onClick={() => setComparing(false)}
+            title="Close comparison"
+            className="absolute top-4 right-4 z-10 h-9 w-9 rounded-full bg-white/90 hover:bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-500 hover:text-slate-800"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full lg:w-[47vw] max-w-2xl max-h-[90vh] overflow-y-auto p-4">
+            <SimulationPanel panelLabel="Simulation 1" compact />
+          </div>
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full lg:w-[47vw] max-w-2xl max-h-[90vh] overflow-y-auto p-4">
+            <SimulationPanel panelLabel="Simulation 2" onRemove={() => setComparing(false)} compact />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

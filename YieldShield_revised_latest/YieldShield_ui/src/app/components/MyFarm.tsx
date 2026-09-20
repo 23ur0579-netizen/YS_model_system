@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, ReactNode } from "react";
-import { Tractor, MapPin, Layers, TrendingUp, Leaf, CheckCircle2, Clock, Plus, FlaskConical, Droplets, ThermometerSun, CloudRain, Wheat, Loader2, BookOpen, Pencil, Sparkles, AlertTriangle, ChevronDown, Download, CalendarClock, X, Ruler, Trash2, LandPlot, Sprout, PlayCircle, Package, Info, Copy } from "lucide-react";
+import { Tractor, MapPin, Layers, TrendingUp, Leaf, CheckCircle2, Clock, Plus, FlaskConical, Droplets, ThermometerSun, CloudRain, Wheat, Loader2, BookOpen, Pencil, Sparkles, AlertTriangle, ChevronDown, Download, CalendarClock, X, Ruler, Trash2, LandPlot, Sprout, PlayCircle, Package, Info, Copy, RotateCcw, Scale, Layers3 } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { useStore, Prediction, Field, plantingWindow, predictYield, adminCrop, remainingFieldArea, moisturePctToMm, municipalityAvgMoistureMm } from "../store";
 import { BARANGAY_FACTS, BARANGAY_DATA, getPlantingTechniques, seasonForMonth, techniqueLabel } from "../data/binalonan";
@@ -14,6 +14,9 @@ import { polygonAreaHa } from "../lib/geo";
 import { YieldValue, AreaValue, SeedRateValue } from "./UnitValue";
 import { StatCard as SummaryCard } from "./StatCard";
 import { SearchableSelect, SearchableOption } from "./SearchableSelect";
+import { Tooltip as HintTip } from "./Tooltip";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { VarietyCompareModal } from "./VarietyCompare";
 
 function harvestDays(crop: Prediction["crop"]) {
   return crop === "Palay (Rice)" ? 120 : 90;
@@ -97,7 +100,8 @@ function PlotDetail({ p }: { p: Prediction }) {
               </span>
             )}
           </div>
-          <div className="mt-2 text-slate-900 text-xl tracking-tight">{p.plotId}</div>
+          <div className="mt-2 text-slate-900 text-xl tracking-tight">{p.name || p.plotId}</div>
+          {p.name && <div className="text-xs text-slate-400">{p.plotId}</div>}
           <div className="text-sm text-slate-500 flex items-center gap-1 mt-0.5">
             <MapPin className="h-3.5 w-3.5" />
             {p.barangay.replace(/([a-z])([A-Z])/g, "$1 $2")}, Binalonan
@@ -649,11 +653,29 @@ const VARIETY_PRODUCT_TYPE: Record<string, string> = {
 
 const inputCls = "w-full h-10 px-3 rounded-lg border border-slate-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none text-sm";
 
-function blankCropping(field: Field) {
+// Auto-generates a plot code so farmers no longer have to invent a
+// unique identifier by hand — see MyFarm.tsx's "Cropping ID" field and
+// migration 27, which separates this immutable auto-generated code
+// from the optional, freely-editable "name" label below. Format:
+// <3-letter barangay prefix>-<year>-<sequence>. The backend's
+// per-farmer unique index (migration 19) is still the real collision
+// guarantee; this just needs to be reasonable, not perfect.
+function generatePlotCode(field: Field, existingCount: number): string {
+  const year = new Date().getFullYear();
+  const prefix = field.barangay.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "LOT";
+  const seq = String(existingCount + 1).padStart(3, "0");
+  return `${prefix}-${year}-${seq}`;
+}
+
+function blankCropping(field: Field, plotCode: string) {
   const bData = BARANGAY_DATA[field.barangay];
   return {
     crop: "Palay (Rice)" as "Palay (Rice)" | "Corn",
-    plotId: "",
+    plotId: plotCode,
+    // Optional free-text label — separate from plotId (see migration
+    // 27) so renaming a cropping for clarity never risks colliding
+    // with another one's identifier.
+    name: "",
     area: String(field.area || ""),
     plantingDate: new Date().toISOString().slice(0, 10),
     // Own-seed (the default before any seed source is chosen) offers
@@ -749,7 +771,7 @@ export function AddFieldModal({ onClose, onCreated, onBehalf }: { onClose: () =>
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-[95vw] sm:w-[75vw] max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center">
@@ -858,6 +880,7 @@ function croppingToForm(p: Prediction): ReturnType<typeof blankCropping> {
   return {
     crop: p.crop,
     plotId: p.plotId,
+    name: p.name ?? "",
     area: String(p.area),
     plantingDate: p.plantingDate,
     variety: p.variety ?? (p.crop === "Palay (Rice)" ? PALAY_VARIETIES[0] : CORN_VARIETIES[0]),
@@ -892,7 +915,7 @@ function croppingToForm(p: Prediction): ReturnType<typeof blankCropping> {
 }
 
 // ── Add / Simulate / Edit Cropping modal ─────────────────────────────────
-export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { field: Field; mode: "add" | "simulate" | "edit"; existing?: Prediction; onClose: () => void; onBehalf?: OnBehalf }) {
+export function CroppingModal({ field, mode, existing, onClose, onBehalf, onOpenCompare, compact }: { field: Field; mode: "add" | "simulate" | "edit"; existing?: Prediction; onClose: () => void; onBehalf?: OnBehalf; onOpenCompare?: () => void; compact?: boolean }) {
   const { user, predictions, addPrediction, updatePrediction, logAudit, cropVarieties } = useStore();
   const t = useT();
   // A Corn/Palay-assigned admin can only file croppings for their own
@@ -900,7 +923,7 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
   const lockedCrop = adminCrop(user?.adminRole);
   const isCropLocked = mode === "add" && (lockedCrop === "Corn" || lockedCrop === "Palay (Rice)");
   const [form, setForm] = useState(() => {
-    const base = existing ? croppingToForm(existing) : blankCropping(field);
+    const base = existing ? croppingToForm(existing) : blankCropping(field, generatePlotCode(field, predictions.length));
     if (!isCropLocked || base.crop === lockedCrop) return base;
     return {
       ...base,
@@ -912,6 +935,14 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState<Prediction | null>(null);
   const [weatherSource, setWeatherSource] = useState<"forecast" | "historical" | "climatology_average" | null>(null);
+  const [compareOpen, setCompareOpen] = useState(false);
+  // True from the moment "done" shows until the auto-generated crop
+  // calendar (watering/fertilizer/etc. reminders) has actually been
+  // fetched back into the store — see addPrediction's onSynced. Drives
+  // the small "Setting up your crop calendar…" note below so the
+  // farmer knows to wait a beat instead of wondering why Calendar
+  // looks empty for their brand-new cropping.
+  const [calendarSyncing, setCalendarSyncing] = useState(false);
   const isSimulate = mode === "simulate";
   const isEdit = mode === "edit";
 
@@ -1102,6 +1133,7 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
       farmer: onBehalf?.farmerName ?? user?.name ?? "Unknown",
       ...(onBehalf ? { ownerId: onBehalf.ownerId } : {}),
       plotId: form.plotId.trim(),
+      name: form.name.trim() || undefined,
       fieldId: field.id,
       barangay: field.barangay,
       crop: form.crop,
@@ -1154,11 +1186,23 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
         // the modal stays open and shows a real, hard-to-miss error
         // instead, with the on-screen values rolled back to match
         // what's actually saved (see store.tsx's updatePrediction).
-        updatePrediction(existing.id, buildPayload())
+        updatePrediction(existing.id, buildPayload(), (result) => {
+          setCalendarSyncing(false);
+          if (result) setDone(result);
+        })
           .then((pred) => {
             setSaving(false);
+            if (pred) setCalendarSyncing(true);
             toast.success(`${t("farm.croppingUpdatedToast")} ${pred?.plotId ?? form.plotId} — ${pred ? pred.predictedYield.toFixed(2) : ""} t/ha ${t("farm.predictedSuffix")}.`);
-            onClose();
+            // Shows the same success screen as a fresh "add", with the
+            // same "Setting up its crop-care calendar…" indicator — a
+            // planting-date/variety/technique edit can just as easily
+            // regenerate the whole schedule server-side (see
+            // farm_input.py's update_farm_input), so the farmer needs
+            // the same visual confirmation before assuming Calendar is
+            // already showing the new dates.
+            if (pred) setDone(pred);
+            else onClose();
           })
           .catch(() => {
             setSaving(false);
@@ -1166,7 +1210,17 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
           });
         return;
       }
-      const pred = addPrediction(buildPayload());
+      const pred = addPrediction(buildPayload(), (result) => {
+        setCalendarSyncing(false);
+        // Replace the optimistic client-side estimate shown the instant
+        // this screen appeared with the authoritative, server-confirmed
+        // figure (the trained model's own number, when available) —
+        // otherwise this success screen kept showing the earlier guess
+        // forever, which then looked like it had silently "changed" the
+        // next time the farmer saw this cropping (e.g. after a reload).
+        if (result) setDone(result);
+      });
+      setCalendarSyncing(true);
       if (onBehalf) logAudit({ category: "account", action: `Filed cropping on behalf of farmer (${pred.plotId})`, target: onBehalf.farmerName });
       setSaving(false);
       setDone(pred);
@@ -1180,9 +1234,15 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
+    <>
+    <div className={`relative bg-white rounded-2xl shadow-2xl w-full ${compact ? "lg:w-[46vw] max-w-xl" : "lg:w-[75vw] max-w-3xl"} max-h-[90vh] flex flex-col overflow-hidden`}>
+      {/* "+" — opens a second, fully independent Add/Simulate Cropping
+          form alongside this one so the farmer/admin can compare two
+          draft configurations (variety, technique, planting date…) and
+          their live predictions side by side. The compare slot always
+          mirrors this modal's own mode (see the call site in MyFarm.tsx)
+          — comparing while editing an existing cropping isn't offered,
+          since there's only ever one existing record to edit. */}
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
@@ -1195,9 +1255,21 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
               <div className="text-xs text-slate-500">{field.name} · {field.barangay.replace(/([a-z])([A-Z])/g, "$1 $2")}</div>
             </div>
           </div>
-          <button onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenCompare && (
+              <button
+                type="button"
+                onClick={onOpenCompare}
+                title="Open a second draft to compare side by side"
+                className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-sm shrink-0"
+              >
+                <Plus className="h-3.5 w-3.5" /> Compare
+              </button>
+            )}
+            <button onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 shrink-0">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Success state */}
@@ -1206,32 +1278,61 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
             <div className="h-16 w-16 rounded-2xl bg-emerald-50 flex items-center justify-center">
               <CheckCircle2 className="h-8 w-8 text-emerald-500" />
             </div>
-            <div className="text-slate-900 text-lg">{done.plotId} {t("farm.addedSuffix")}</div>
+            <div className="text-slate-900 text-lg">{isEdit ? `${done.plotId} updated` : `${done.plotId} ${t("farm.addedSuffix")}`}</div>
             <p className="text-sm text-slate-500 max-w-xs">
               {t("farm.predictedYieldLabel")}: <YieldValue valueTHa={done.predictedYield} className="text-emerald-700" /> {t("farm.withConfidence")} {done.confidence}% {t("farm.confidenceWord")}.
               {" "}{t("farm.nowTrackedUnder")} {field.name}.
             </p>
+            {calendarSyncing ? (
+              <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-50 px-3 py-1.5 rounded-full">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Setting up its crop-care calendar…
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Calendar activities are ready — check the Calendar tab.
+              </div>
+            )}
             <div className="flex gap-3 mt-2">
-              <button onClick={() => { setForm(blankCropping(field)); setDone(null); }} className="px-4 h-10 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">{t("farm.addAnother")}</button>
-              <button onClick={onClose} className="px-5 h-10 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm">{t("farm.done")}</button>
+              {!isEdit && (
+                <button onClick={() => { setForm(blankCropping(field, generatePlotCode(field, predictions.length))); setDone(null); setCalendarSyncing(false); }} className="px-4 h-10 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">{t("farm.addAnother")}</button>
+              )}
+              <button
+                onClick={onClose}
+                disabled={calendarSyncing}
+                title={calendarSyncing ? "Setting up its crop-care calendar…" : undefined}
+                className="px-5 h-10 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-600"
+              >
+                {t("farm.done")}
+              </button>
             </div>
           </div>
         ) : (
-          <form onSubmit={submit} className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          <form onSubmit={submit} className="flex-1 overflow-y-auto px-6 pb-5 space-y-5">
 
-            {/* Live yield preview */}
-            <div className={`rounded-xl border p-4 flex items-center gap-4 ${isSimulate ? "bg-sky-50/60 border-sky-100" : "bg-emerald-50/60 border-emerald-100"}`}>
-              <div className="flex items-center gap-2 text-slate-500 text-xs">
-                <Sparkles className="h-4 w-4 text-emerald-600" /> {t("farm.livePrediction")}
-              </div>
-              <div className="ml-auto flex items-baseline gap-6">
-                <div className="text-right">
-                  <div className="text-2xl tracking-tight text-emerald-700"><YieldValue valueTHa={preview.yieldPerHa} className="text-2xl tracking-tight text-emerald-700" /></div>
-                  <div className="text-[11px] text-slate-400">{t("farm.estimatedYield")}</div>
+            {/* Live yield preview — sticky so it stays visible while
+                scrolling through the rest of this fairly long form,
+                same treatment as Simulation.tsx's live-result panel.
+                pt-5 (not the form's own top padding, removed above) so
+                this wrapper's background actually starts flush with
+                the scroll container's top edge — a padding-cancelling
+                negative-margin trick here left a hairline seam where
+                the field behind it peeked through while scrolling. */}
+            <div className={`sticky top-0 z-10 pt-5 pb-4 -mx-6 px-6 backdrop-blur-sm ${isSimulate ? "bg-sky-50/95" : "bg-emerald-50/95"}`}>
+              <div className={`rounded-xl border p-4 flex items-center gap-4 shadow-sm ${isSimulate ? "bg-sky-50 border-sky-100" : "bg-emerald-50 border-emerald-100"}`}>
+                <div className="flex items-center gap-2 text-slate-500 text-xs">
+                  <Sparkles className="h-4 w-4 text-emerald-600" /> {t("farm.livePrediction")}
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl tracking-tight text-slate-800">{preview.confidence}%</div>
-                  <div className="text-[11px] text-slate-400">{t("farm.confidenceWord")}</div>
+                <div className="ml-auto flex items-baseline gap-6">
+                  <div className="text-right">
+                    <div className="text-2xl tracking-tight text-emerald-700"><YieldValue valueTHa={preview.yieldPerHa} className="text-2xl tracking-tight text-emerald-700" /></div>
+                    <div className="text-[11px] text-slate-400">{t("farm.estimatedYield")}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl tracking-tight text-slate-800">{preview.confidence}%</div>
+                    <div className="text-[11px] text-slate-400 flex items-center justify-end gap-1">{t("farm.confidenceWord")} <HintTip text={t("tip.confidence")} /></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1286,7 +1387,7 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
                 (see reports.py) — neither is required for the yield
                 prediction itself. */}
             <label className="block">
-              <div className="text-sm text-slate-700 mb-1.5">Ecosystem <span className="text-slate-400">(optional)</span></div>
+              <div className="text-sm text-slate-700 mb-1.5 flex items-center gap-1">Ecosystem <span className="text-slate-400">(optional)</span> <HintTip text={t("tip.ecosystem")} /></div>
               <select value={form.ecosystem} onChange={(e) => set("ecosystem", e.target.value)} className={`${inputCls} appearance-none`}>
                 <option value="">Not specified</option>
                 <option value="Irrigated">Irrigated</option>
@@ -1295,7 +1396,7 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
             </label>
 
             <div>
-              <div className="text-sm text-slate-700 mb-2">Seed source <span className="text-slate-400">(optional)</span></div>
+              <div className="text-sm text-slate-700 mb-2 flex items-center gap-1">Seed source <span className="text-slate-400">(optional)</span> <HintTip text={t("tip.seedSource")} /></div>
               <div className="grid grid-cols-2 gap-3">
                 <button type="button" onClick={() => chooseSeedSource("own")}
                   className={`h-11 rounded-lg border text-sm flex items-center justify-center gap-2 transition-colors ${form.seedSource === "own" ? "border-emerald-500 bg-emerald-50 text-emerald-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
@@ -1338,12 +1439,23 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
                 curated Binalonan-common list, DA narrows to the national
                 catalog (further narrowed by seed type once picked). */}
             <label className="block">
-              <div className="text-sm text-slate-700 mb-1.5">{t("farm.cropVariety")}</div>
+              <div className="text-sm text-slate-700 mb-1.5 flex items-center justify-between">
+                <span>{t("farm.cropVariety")}</span>
+                <button
+                  type="button"
+                  onClick={() => setCompareOpen(true)}
+                  className="text-xs text-emerald-700 hover:text-emerald-800 flex items-center gap-1"
+                >
+                  <Scale className="h-3 w-3" /> Compare varieties
+                </button>
+              </div>
               <SearchableSelect
                 value={form.variety}
                 onChange={(v) => set("variety", v)}
                 options={varietyOptions}
                 placeholder="Type to search a variety…"
+                allowCustom
+                customLabel={(q) => `Add "${q}" as a new variety`}
               />
               {finalProductPreview && (
                 <div className="text-xs text-slate-500 mt-1.5">
@@ -1397,12 +1509,39 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
               </div>
             </div>
 
-            {/* Cropping ID + Area + Crop distance */}
-            <div className="grid grid-cols-3 gap-3">
+            {/* Name (free-text, optional) + auto-generated ID */}
+            <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <div className="text-sm text-slate-700 mb-1.5">{t("farm.croppingId")} <span className="text-rose-500">*</span></div>
-                <input value={form.plotId} onChange={(e) => set("plotId", e.target.value)} placeholder="e.g. LOT-2026-201" className={inputCls} />
+                <div className="text-sm text-slate-700 mb-1.5">Cropping name <span className="text-slate-400 text-xs">(optional)</span></div>
+                <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Back lot near the creek" className={inputCls} />
               </label>
+              <label className="block">
+                <div className="text-sm text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  {t("farm.croppingId")}
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">Auto-generated</span>
+                </div>
+                <div className="relative">
+                  <input
+                    value={form.plotId}
+                    disabled
+                    className={`${inputCls} bg-slate-50 text-slate-500 cursor-not-allowed pr-9`}
+                  />
+                  {!isEdit && (
+                    <button
+                      type="button"
+                      title="Generate a new code"
+                      onClick={() => set("plotId", generatePlotCode(field, predictions.length))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6 rounded-md hover:bg-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </label>
+            </div>
+
+            {/* Cropping ID + Area + Crop distance */}
+            <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <div className="text-sm text-slate-700 mb-1.5">{t("farm.croppedAreaHa")} <span className="text-rose-500">*</span></div>
                 <input
@@ -1559,7 +1698,8 @@ export function CroppingModal({ field, mode, existing, onClose, onBehalf }: { fi
           </form>
         )}
       </div>
-    </div>
+      {compareOpen && <VarietyCompareModal onClose={() => setCompareOpen(false)} initialCrop={form.crop} />}
+    </>
   );
 }
 
@@ -1665,6 +1805,17 @@ export function MyFarm() {
   const { visibleFields, visiblePredictions, deleteField, deletePrediction, current } = useStore();
   const [addFieldOpen, setAddFieldOpen] = useState(false);
   const [croppingMode, setCroppingMode] = useState<null | "add" | "simulate" | "edit">(null);
+  // Which destructive-action confirmation dialog is open, if any —
+  // replaces the native browser confirm() popup (jarring, unstyled)
+  // with the same custom dialog the rest of the app already uses for
+  // this (see ManageUsers.tsx's user-delete confirmation).
+  const [confirmDeleteField, setConfirmDeleteField] = useState(false);
+  const [confirmDeleteCropping, setConfirmDeleteCropping] = useState(false);
+  // A second, independent "Add Cropping" draft opened via the primary
+  // modal's "+" button — lets the farmer/admin compare two candidate
+  // configurations side by side before deciding what to actually save.
+  // Only ever meaningful alongside croppingMode === "add".
+  const [compareSlotOpen, setCompareSlotOpen] = useState(false);
   const [fieldInfoOpen, setFieldInfoOpen] = useState(false);
 
   const fields = useMemo(
@@ -1825,13 +1976,7 @@ export function MyFarm() {
                     <Plus className="h-4 w-4" /> {t("farm.addCropping")}
                   </button>
                   <button
-                    onClick={() => {
-                      if (confirm(`Delete "${activeField.name}" and its ${croppings.length} cropping period(s)?`)) {
-                        deleteField(activeField.id);
-                        setActiveFieldId(null);
-                        toast.success("Field deleted.");
-                      }
-                    }}
+                    onClick={() => setConfirmDeleteField(true)}
                     className="h-9 w-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200"
                     title="Delete field"
                   >
@@ -1881,14 +2026,7 @@ export function MyFarm() {
                     )}
                     {activeCropping && (
                       <button
-                        onClick={() => {
-                          if (confirm(`Delete the "${activeCropping.plotId}" cropping? This removes its prediction and any watering/fertilizer reminders too — this can't be undone.`)) {
-                            const remaining = croppings.filter((p) => p.id !== activeCropping.id);
-                            deletePrediction(activeCropping.id);
-                            setActiveCroppingId(remaining[0]?.id ?? null);
-                            toast.success("Cropping deleted.");
-                          }
-                        }}
+                        onClick={() => setConfirmDeleteCropping(true)}
                         className="order-last ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-500 border border-slate-200 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200"
                         title="Delete this cropping"
                       >
@@ -1934,15 +2072,62 @@ export function MyFarm() {
         />
       )}
       {croppingMode && activeField && (
-        <CroppingModal
-          field={activeField}
-          mode={croppingMode}
-          existing={croppingMode === "edit" ? activeCropping ?? undefined : undefined}
-          onClose={() => setCroppingMode(null)}
-        />
+        <div className="fixed inset-0 z-50 flex flex-col lg:flex-row items-center justify-center gap-5 p-4 overflow-auto">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => { setCroppingMode(null); setCompareSlotOpen(false); }} />
+          <CroppingModal
+            field={activeField}
+            mode={croppingMode}
+            existing={croppingMode === "edit" ? activeCropping ?? undefined : undefined}
+            onClose={() => { setCroppingMode(null); setCompareSlotOpen(false); }}
+            onOpenCompare={(croppingMode === "add" || croppingMode === "simulate") && !compareSlotOpen ? () => setCompareSlotOpen(true) : undefined}
+            compact={compareSlotOpen}
+          />
+          {/* The compare slot always mirrors the primary modal's mode —
+              comparing two "Simulate" runs must never quietly become a
+              real "Add" (which actually saves to the database), and
+              vice versa. */}
+          {compareSlotOpen && (croppingMode === "add" || croppingMode === "simulate") && (
+            <CroppingModal
+              key="compare-slot"
+              field={activeField}
+              mode={croppingMode}
+              onClose={() => setCompareSlotOpen(false)}
+              compact
+            />
+          )}
+        </div>
       )}
       {fieldInfoOpen && activeField && (
         <FieldInfoModal field={activeField} croppingCount={croppings.length} onClose={() => setFieldInfoOpen(false)} />
+      )}
+      {confirmDeleteField && activeField && (
+        <ConfirmDialog
+          title={`Delete "${activeField.name}" and its ${croppings.length} cropping period(s)?`}
+          body="This can't be undone."
+          confirmLabel="Delete field"
+          onCancel={() => setConfirmDeleteField(false)}
+          onConfirm={() => {
+            deleteField(activeField.id);
+            setActiveFieldId(null);
+            setConfirmDeleteField(false);
+            toast.success("Field deleted.");
+          }}
+        />
+      )}
+      {confirmDeleteCropping && activeCropping && (
+        <ConfirmDialog
+          title={`Delete the "${activeCropping.plotId}" cropping?`}
+          body="This removes its prediction and any watering/fertilizer reminders too — this can't be undone."
+          confirmLabel="Delete cropping"
+          onCancel={() => setConfirmDeleteCropping(false)}
+          onConfirm={() => {
+            const remaining = croppings.filter((p) => p.id !== activeCropping.id);
+            deletePrediction(activeCropping.id);
+            setActiveCroppingId(remaining[0]?.id ?? null);
+            setConfirmDeleteCropping(false);
+            toast.success("Cropping deleted.");
+          }}
+        />
       )}
     </div>
   );

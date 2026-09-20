@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ScrollText, ShieldCheck, Megaphone, UserCog, KeyRound, Sprout, Search, Filter } from "lucide-react";
+import { ScrollText, ShieldCheck, Megaphone, UserCog, KeyRound, Sprout, Search, Filter, Cpu } from "lucide-react";
 import { useStore, AuditCategory, AuditEntry, ADMIN_ROLE_META } from "../store";
 import { StatCard } from "./StatCard";
 
@@ -9,6 +9,7 @@ const CAT_META: Record<AuditCategory, { label: string; icon: any; tint: string; 
   account:      { label: "Account", icon: UserCog, tint: "bg-amber-50 text-amber-600", chip: "bg-amber-50 text-amber-700 border-amber-200" },
   privilege:    { label: "Privilege", icon: KeyRound, tint: "bg-violet-50 text-violet-600", chip: "bg-violet-50 text-violet-700 border-violet-200" },
   seed_distribution: { label: "Seed Distribution", icon: Sprout, tint: "bg-lime-50 text-lime-600", chip: "bg-lime-50 text-lime-700 border-lime-200" },
+  model_retrain: { label: "Model Retrain", icon: Cpu, tint: "bg-rose-50 text-rose-600", chip: "bg-rose-50 text-rose-700 border-rose-200" },
 };
 
 function relTime(ts: number) {

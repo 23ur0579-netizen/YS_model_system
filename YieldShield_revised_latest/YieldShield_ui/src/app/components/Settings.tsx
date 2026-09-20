@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Bell, Sprout, Wheat,
-  CloudSun, Layers, Map as MapIcon, KeyRound, LogOut, Check, Languages, User as UserIcon,
+  CloudSun, Layers, Map as MapIcon, KeyRound, LogOut, Check, Languages, User as UserIcon, HelpCircle,
 } from "lucide-react";
 import { useStore } from "../store";
 import * as api from "../lib/api";
@@ -51,7 +51,7 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: string;
 }
 
 export function Settings() {
-  const { user, profile, logout, lang, setLang, setView } = useStore();
+  const { user, profile, logout, lang, setLang, setView, tooltipsEnabled, setTooltipsEnabled } = useStore();
   const t = useT();
   const isAdmin = user?.role === "Admin";
 
@@ -134,6 +134,16 @@ export function Settings() {
             </button>
           ))}
         </div>
+      </Section>
+
+      {/* Help & tooltips */}
+      <Section icon={HelpCircle} title={t("settings.tooltipsTitle")} desc={t("settings.tooltipsDesc")}>
+        <ToggleRow
+          label={t("settings.tooltipsLabel")}
+          desc={t("settings.tooltipsRowDesc")}
+          on={tooltipsEnabled}
+          onToggle={() => setTooltipsEnabled(!tooltipsEnabled)}
+        />
       </Section>
 
       {/* Notifications */}

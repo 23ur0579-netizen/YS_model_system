@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   Bell, AlertTriangle, CloudRain, Sparkles, Wheat, Settings2, X, CheckCheck,
   Trash2, BellOff, Megaphone, Pin, PinOff, Plus, CalendarDays, Tag,
-  BookOpen, ShieldAlert, Clock, Loader2, Pencil, Tractor,
+  BookOpen, ShieldAlert, Clock, Loader2, Pencil, Tractor, Sprout,
 } from "lucide-react";
 import { useStore, AppNotification, NotifCategory, AnnouncementTag, Announcement } from "../store";
 import { useT } from "../i18n";
@@ -36,6 +36,7 @@ function categoryMeta(t: (k: string) => string): Record<NotifCategory, { label: 
     harvest:    { label: t("notif.catHarvest"),    icon: Wheat,         chip: "bg-emerald-50 text-emerald-700 border-emerald-200"},
     task:       { label: t("notif.catTask"),       icon: Tractor,       chip: "bg-orange-50 text-orange-700 border-orange-200"  },
     system:     { label: t("notif.catSystem"),     icon: Settings2,     chip: "bg-slate-100 text-slate-600 border-slate-200"    },
+    advisory:   { label: t("notif.catAdvisory"),   icon: Sprout,        chip: "bg-lime-50 text-lime-700 border-lime-200"        },
   };
 }
 
@@ -47,6 +48,7 @@ function notifFilters(t: (k: string) => string): { key: "all" | NotifCategory; l
     { key: "prediction", label: t("notif.filterPredictions") },
     { key: "harvest", label: t("notif.catHarvest") },
     { key: "task", label: t("notif.catTask") },
+    { key: "advisory", label: t("notif.catAdvisory") },
     { key: "system", label: t("notif.catSystem") },
   ];
 }
@@ -56,6 +58,12 @@ function NotifCard({ n, onRead, onDismiss }: { n: AppNotification; onRead: () =>
   const meta = categoryMeta(t)[n.category];
   const Icon = meta.icon;
   const { absolute, relative } = formatNotificationTime(n.time);
+  // Server-generated advisories carry a translation key + params
+  // (see backend/app/advisory_types.py) — rendered in whatever
+  // language is currently selected. Anything without a key (admin
+  // announcements, older stored rows) falls back to its plain text.
+  const displayTitle = n.titleKey ? t(n.titleKey, n.params) : n.title;
+  const displayBody = n.bodyKey ? t(n.bodyKey, n.params) : n.body;
   return (
     <div className={`rounded-2xl border p-4 flex gap-3 ${n.read ? "bg-white border-slate-100" : "bg-white border-emerald-100 shadow-sm shadow-emerald-50"}`}>
       <div className={`h-9 w-9 shrink-0 rounded-xl flex items-center justify-center mt-0.5 ${n.read ? "bg-slate-50" : "bg-emerald-50"}`}>
@@ -65,7 +73,7 @@ function NotifCard({ n, onRead, onDismiss }: { n: AppNotification; onRead: () =>
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
             {!n.read && <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0 mt-1" />}
-            <span className="text-sm text-slate-900">{n.title}</span>
+            <span className="text-sm text-slate-900">{displayTitle}</span>
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${meta.chip}`}>{meta.label}</span>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -79,7 +87,7 @@ function NotifCard({ n, onRead, onDismiss }: { n: AppNotification; onRead: () =>
             </button>
           </div>
         </div>
-        <p className="text-sm text-slate-500 mt-1 leading-relaxed">{n.body}</p>
+        <p className="text-sm text-slate-500 mt-1 leading-relaxed">{displayBody}</p>
         <div className="mt-2 flex items-center gap-3 flex-wrap text-xs text-slate-400">
           <span>{absolute}{relative && ` · ${relative}`}</span>
           {n.barangay && <><span className="text-slate-200">·</span><span>{n.barangay.replace(/([a-z])([A-Z])/g, "$1 $2")}</span></>}

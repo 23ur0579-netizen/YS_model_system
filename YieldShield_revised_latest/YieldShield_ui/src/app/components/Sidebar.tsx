@@ -1,4 +1,4 @@
-import { LayoutDashboard, Database, Settings, LogOut, ClipboardList, Tractor, CalendarDays, Users, Wheat, Megaphone, FlaskConical, ScrollText, Sprout } from "lucide-react";
+import { LayoutDashboard, Database, Settings, LogOut, ClipboardList, Tractor, CalendarDays, Users, Wheat, Megaphone, FlaskConical, ScrollText, Sprout, Cpu } from "lucide-react";
 import logo from "../../imports/Untitled_design__9_.png";
 import { useStore, View, ADMIN_ROLE_META } from "../store";
 import { useT } from "../i18n";
@@ -20,6 +20,7 @@ const ADMIN_NAV: { id: View; tkey: string; icon: any; privileges?: string[] }[] 
   { id: "seeddist",      tkey: "nav.seedDist",      icon: Sprout,        privileges: ["master", "corn", "palay"] },
   { id: "users",         tkey: "nav.users",         icon: Users,          privileges: ["master", "verification"] },
   { id: "audit",         tkey: "nav.audit",         icon: ScrollText,     privileges: ["master"] },
+  { id: "model",         tkey: "nav.model",         icon: Cpu,            privileges: ["master", "analyst"] },
   { id: "notifications", tkey: "nav.notifications", icon: Megaphone },
 ];
 

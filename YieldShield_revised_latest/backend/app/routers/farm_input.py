@@ -228,8 +228,8 @@ def submit_farm_input(body: FarmInputRequest, user: CurrentUser = Depends(get_cu
                 cur.execute(
                     """
                     INSERT INTO yieldshield.farm_profile
-                        (user_id, barangay_id, crop_type_id, land_area_ha, soil_condition, plot_code, field_id, filed_by_user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        (user_id, barangay_id, crop_type_id, land_area_ha, soil_condition, plot_code, plot_name, field_id, filed_by_user_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING farm_id
                     """,
                     (
@@ -239,6 +239,7 @@ def submit_farm_input(body: FarmInputRequest, user: CurrentUser = Depends(get_cu
                         body.area_ha,
                         body.soil_type or None,
                         body.plot_id,
+                        body.plot_name or None,
                         body.field_id,
                         user.user_id,
                     ),
@@ -295,10 +296,14 @@ def submit_farm_input(body: FarmInputRequest, user: CurrentUser = Depends(get_cu
             for activity in schedule:
                 cur.execute(
                     """
-                    INSERT INTO yieldshield.crop_task (user_id, input_log_id, task_type, text, due_date, auto_generated)
-                    VALUES (%s, %s, %s, %s, %s, TRUE)
+                    INSERT INTO yieldshield.crop_task
+                        (user_id, input_log_id, task_type, text, due_date, end_date, auto_generated, text_key, note_key, note_rainfall_mm)
+                    VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s)
                     """,
-                    (owner_id, input_log_id, activity["task_type"], activity["text"], activity["due_date"]),
+                    (
+                        owner_id, input_log_id, activity["task_type"], activity["text"], activity["due_date"], activity["end_date"],
+                        activity["text_key"], activity["note_key"], activity["note_rainfall_mm"],
+                    ),
                 )
 
             # Let the farmer know a schedule was plotted for them, headlined
@@ -473,6 +478,15 @@ def update_farm_input(input_log_id: int, body: PredictionUpdateRequest, user: Cu
             row = cur.fetchone()
             if row is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Field record not found.")
+
+            # plot_name lives on farm_profile (see migration 27), not
+            # farm_input_log like the rest of simple_map above — a
+            # separate statement, keyed by the farm_id just looked up.
+            if body.plot_name is not None:
+                cur.execute(
+                    "UPDATE yieldshield.farm_profile SET plot_name = %s WHERE farm_id = %s",
+                    (body.plot_name.strip() or None, row["farm_id"]),
+                )
             cur.execute(
                 """
                 SELECT fp.field_id, fp.barangay_id, fp.crop_type_id, fp.user_id, fp.plot_code,
@@ -516,10 +530,14 @@ def update_farm_input(input_log_id: int, body: PredictionUpdateRequest, user: Cu
                 for activity in schedule:
                     cur.execute(
                         """
-                        INSERT INTO yieldshield.crop_task (user_id, input_log_id, task_type, text, due_date, auto_generated)
-                        VALUES (%s, %s, %s, %s, %s, TRUE)
+                        INSERT INTO yieldshield.crop_task
+                            (user_id, input_log_id, task_type, text, due_date, end_date, auto_generated, text_key, note_key, note_rainfall_mm)
+                        VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s)
                         """,
-                        (farm_row["user_id"], input_log_id, activity["task_type"], activity["text"], activity["due_date"]),
+                        (
+                            farm_row["user_id"], input_log_id, activity["task_type"], activity["text"], activity["due_date"], activity["end_date"],
+                            activity["text_key"], activity["note_key"], activity["note_rainfall_mm"],
+                        ),
                     )
                 if schedule:
                     reschedule_body = (
