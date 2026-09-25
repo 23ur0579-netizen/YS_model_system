@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { MapPin, Upload, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { MapPin, Upload, ZoomIn, ZoomOut, Maximize2, Trophy, Layers } from "lucide-react";
 import { useStore } from "../store";
 import { BARANGAY_FACTS } from "../data/binalonan";
 import { YieldValue, AreaValue } from "./UnitValue";
@@ -53,6 +53,11 @@ function colorFor(yieldVal: number) {
   }
   return "rgb(167, 243, 208)";
 }
+
+// A smooth CSS gradient across the same stops colorFor() uses, for the
+// legend bar — reads as one continuous scale instead of six flat
+// blocks, which is what a proper choropleth legend looks like.
+const LEGEND_GRADIENT = `linear-gradient(to right, ${[3.0, 4.0, 4.8, 5.3, 5.8, 6.5].map((v) => colorFor(v)).join(", ")})`;
 
 const SVG_W = 720;
 const SVG_H = 480;
@@ -136,6 +141,13 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
     [allPredictions, crop]
   );
   const [selected, setSelected] = useState<string | null>(null);
+  // Hover — a lightweight tooltip that follows the cursor, separate
+  // from `selected` (a click, which stays pinned and opens the fuller
+  // side panel below). Tracked in container-relative pixels since the
+  // tooltip is a normal HTML overlay, not part of the SVG's own
+  // (zoom/pan-scaled) coordinate space.
+  const [hovered, setHovered] = useState<{ name: string; label: string; y: number; hasData: boolean; x: number; y2: number } | null>(null);
+  const mapWrapRef = useRef<HTMLDivElement | null>(null);
 
   // Zoom/pan — this map is a hand-drawn SVG (no tile provider), so pan/
   // zoom is implemented directly against the SVG's viewBox rather than
@@ -266,6 +278,12 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
     setSelected((cur) => (cur === name ? null : name));
   }
 
+  function handlePathHover(e: React.MouseEvent, e2: { name: string; label: string; y: number; hasData: boolean }) {
+    const rect = mapWrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setHovered({ ...e2, x: e.clientX - rect.left, y2: e.clientY - rect.top });
+  }
+
   const stats = useMemo(() => {
     const map: Record<string, { count: number; total: number; ha: number }> = {};
     for (const p of predictions) {
@@ -325,33 +343,31 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
   // shouldn't be ranked against ones that do have data either way.
   const ranked = [...enriched].filter((e: any) => e.hasData).sort((a: any, b: any) => b.y - a.y);
 
-  const legendStops = [
-    { color: colorFor(3.2) }, { color: colorFor(4.0) },
-    { color: colorFor(4.8) }, { color: colorFor(5.3) },
-    { color: colorFor(5.8) }, { color: colorFor(6.6) },
-  ];
-
   const active = selected ? enriched.find((e: any) => e.name === selected) : null;
   const activeStats = active ? stats[active.name] : null;
 
   return (
-    <div className="bg-white border border-slate-100 rounded-2xl p-5">
+    <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
       <div className="flex items-center justify-between mb-4">
-        <div>
-          <div className="text-slate-900 flex items-center gap-2">
-            <MapPin className="h-4 w-4 text-emerald-600" /> Binalonan Yield Heatmap
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-xl bg-emerald-50 flex items-center justify-center shrink-0">
+            <MapPin className="h-4 w-4 text-emerald-600" />
           </div>
-          <div className="text-xs text-slate-500 mt-0.5">
-            Average predicted yield (t/ha) per barangay — real boundaries from GeoJSON
+          <div>
+            <div className="text-slate-900">Binalonan Yield Heatmap</div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              Average predicted yield (t/ha) per barangay — real boundaries from GeoJSON
+            </div>
           </div>
         </div>
-        <div className="text-xs text-slate-500">
+        <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-full px-3 py-1.5">
+          <Layers className="h-3.5 w-3.5 text-slate-400" />
           {predictions.length} predictions · {features.length} barangays
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="col-span-2 relative bg-gradient-to-br from-slate-50 to-emerald-50/40 rounded-xl border border-slate-100 overflow-hidden">
+        <div ref={mapWrapRef} className="col-span-2 relative bg-gradient-to-br from-slate-50 to-emerald-50/40 rounded-xl border border-slate-100 overflow-hidden ring-1 ring-slate-900/5">
           <svg
             ref={svgRef}
             viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
@@ -370,24 +386,32 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
               <pattern id="bgGrid" width="40" height="40" patternUnits="userSpaceOnUse">
                 <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" strokeWidth="0.5" />
               </pattern>
+              <filter id="brgyShadow" x="-40%" y="-40%" width="180%" height="180%">
+                <feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="#047857" floodOpacity="0.28" />
+              </filter>
             </defs>
             <rect x={-SVG_W} y={-SVG_H} width={SVG_W * 3} height={SVG_H * 3} fill="url(#bgGrid)" />
 
             {enriched.map((e: any) => {
               const isActive = selected === e.name;
+              const isHovered = hovered?.name === e.name && !isActive;
               return (
                 <path
                   key={e.name}
                   d={e.path}
                   fill={e.hasData ? colorFor(e.y) : "#e2e8f0"}
-                  stroke={isActive ? "#047857" : "#ffffff"}
-                  strokeWidth={(isActive ? 2.5 : 1) / zoomLevel}
+                  stroke={isActive ? "#047857" : isHovered ? "#10b981" : "#ffffff"}
+                  strokeWidth={(isActive ? 2.5 : isHovered ? 1.75 : 1) / zoomLevel}
+                  opacity={isHovered ? 0.92 : 1}
                   style={{
-                    transition: "fill 150ms, stroke 150ms",
-                    filter: isActive ? "drop-shadow(0 6px 14px rgba(4,120,87,0.32))" : "none",
+                    transition: "fill 150ms, stroke 150ms, opacity 150ms",
+                    filter: isActive ? "url(#brgyShadow)" : "none",
                     cursor: "pointer",
                   }}
                   onClick={() => handlePathClick(e.name)}
+                  onMouseEnter={(ev) => handlePathHover(ev, e)}
+                  onMouseMove={(ev) => handlePathHover(ev, e)}
+                  onMouseLeave={() => setHovered((cur) => (cur?.name === e.name ? null : cur))}
                 />
               );
             })}
@@ -411,14 +435,29 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
             })}
           </svg>
 
+          {/* Hover tooltip — HTML overlay in container-relative pixels,
+              separate from the SVG's own zoom/pan-scaled coordinates. */}
+          {hovered && (
+            <div
+              className="absolute z-10 pointer-events-none bg-slate-900 text-white rounded-lg px-3 py-2 shadow-lg text-xs -translate-x-1/2 -translate-y-[calc(100%+10px)]"
+              style={{ left: hovered.x, top: hovered.y2 }}
+            >
+              <div className="text-white">{hovered.label}</div>
+              <div className="text-slate-300 mt-0.5">
+                {hovered.hasData ? `${hovered.y.toFixed(2)} t/ha avg` : "No live predictions yet"}
+              </div>
+              <div className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
+            </div>
+          )}
+
           {/* Fixed overlays — HTML, not SVG, so they stay put in the
               corner regardless of the map's zoom/pan state. */}
-          <div className="absolute top-3 right-3 bg-white rounded-lg border border-slate-200 px-3 py-2 text-center pointer-events-none">
+          <div className="absolute top-3 right-3 bg-white/95 backdrop-blur rounded-lg border border-slate-200 px-3 py-2 text-center pointer-events-none shadow-sm">
             <div className="text-[11px] text-slate-900">Municipality of Binalonan</div>
             <div className="text-[9px] text-slate-500">Pangasinan · {features.length} barangays</div>
           </div>
 
-          <div className="absolute bottom-3 right-3 h-8 w-8 rounded-full bg-white border border-slate-200 flex flex-col items-center justify-center pointer-events-none">
+          <div className="absolute bottom-3 right-3 h-8 w-8 rounded-full bg-white border border-slate-200 flex flex-col items-center justify-center pointer-events-none shadow-sm">
             <span className="text-[8px] text-slate-500 leading-none">N</span>
             <svg width="8" height="10" viewBox="0 0 8 10" className="mt-0.5">
               <path d="M4,0 L8,10 L4,7 L0,10 Z" fill="#10b981" opacity="0.75" />
@@ -426,11 +465,11 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
           </div>
 
           {/* Zoom controls */}
-          <div className="absolute top-3 left-3 flex flex-col rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm">
+          <div className="absolute top-3 left-3 flex flex-col rounded-lg border border-slate-200 bg-white/95 backdrop-blur overflow-hidden shadow-sm">
             <button
               onClick={() => zoomButton(1.4)}
               disabled={zoomLevel >= SVG_W / MIN_VB_W - 0.01}
-              className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-white border-b border-slate-100"
+              className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 transition-all disabled:opacity-30 disabled:hover:bg-white disabled:active:scale-100 border-b border-slate-100"
               aria-label="Zoom in"
             >
               <ZoomIn className="h-4 w-4" />
@@ -438,7 +477,7 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
             <button
               onClick={() => zoomButton(1 / 1.4)}
               disabled={zoomLevel <= 1.01}
-              className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-white border-b border-slate-100"
+              className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 transition-all disabled:opacity-30 disabled:hover:bg-white disabled:active:scale-100 border-b border-slate-100"
               aria-label="Zoom out"
             >
               <ZoomOut className="h-4 w-4" />
@@ -446,20 +485,16 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
             <button
               onClick={resetView}
               disabled={zoomLevel <= 1.01 && vb.x === 0 && vb.y === 0}
-              className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-white"
+              className="h-8 w-8 flex items-center justify-center text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 transition-all disabled:opacity-30 disabled:hover:bg-white disabled:active:scale-100"
               aria-label="Reset view"
             >
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
           </div>
 
-          <div className="absolute bottom-3 left-3 right-3 bg-white/90 backdrop-blur rounded-lg border border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <div className="absolute bottom-3 left-3 right-3 bg-white/95 backdrop-blur rounded-lg border border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap shadow-sm">
             <span className="text-xs text-slate-500 mr-1">Low</span>
-            <div className="flex h-2 flex-1 rounded-full overflow-hidden min-w-[60px]">
-              {legendStops.map((s, i) => (
-                <div key={i} className="flex-1" style={{ background: s.color }} />
-              ))}
-            </div>
+            <div className="h-2 flex-1 rounded-full min-w-[60px] shadow-inner" style={{ background: LEGEND_GRADIENT }} />
             <span className="text-xs text-slate-500 ml-1">High</span>
             <span className="text-xs text-slate-400 ml-2">t/ha</span>
             <span className="flex items-center gap-1 text-xs text-slate-400 ml-3">
@@ -490,15 +525,21 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
                   </button>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                  <div>
+                  <div className="rounded-lg bg-white/70 border border-emerald-100 px-2.5 py-2">
                     <div className="text-xs text-slate-500">Avg yield</div>
                     <div className={active.hasData ? "text-emerald-800" : "text-slate-400 text-xs"}>
                       {active.hasData ? <YieldValue valueTHa={active.y} className="text-emerald-800" /> : "No live predictions yet"}
                     </div>
                   </div>
-                  <div><div className="text-xs text-slate-500">Plots</div><div className="text-slate-800">{activeStats?.count ?? 0}</div></div>
-                  <div><div className="text-xs text-slate-500">Total area</div><div className="text-slate-800"><AreaValue valueHa={activeStats?.ha ?? 0} className="text-slate-800" /></div></div>
-                  <div><div className="text-xs text-slate-500">Est. output</div><div className="text-slate-800">{active.hasData ? `${((activeStats?.ha ?? 0) * active.y).toFixed(1)} t` : "—"}</div></div>
+                  <div className="rounded-lg bg-white/70 border border-emerald-100 px-2.5 py-2">
+                    <div className="text-xs text-slate-500">Plots</div><div className="text-slate-800">{activeStats?.count ?? 0}</div>
+                  </div>
+                  <div className="rounded-lg bg-white/70 border border-emerald-100 px-2.5 py-2">
+                    <div className="text-xs text-slate-500">Total area</div><div className="text-slate-800"><AreaValue valueHa={activeStats?.ha ?? 0} className="text-slate-800" /></div>
+                  </div>
+                  <div className="rounded-lg bg-white/70 border border-emerald-100 px-2.5 py-2">
+                    <div className="text-xs text-slate-500">Est. output</div><div className="text-slate-800">{active.hasData ? `${((activeStats?.ha ?? 0) * active.y).toFixed(1)} t` : "—"}</div>
+                  </div>
                 </div>
                 {BARANGAY_FACTS[active.name] && (
                   <div className="mt-3 pt-3 border-t border-emerald-100 space-y-1.5 text-xs">
@@ -518,19 +559,33 @@ export function BarangayHeatMap({ crop = "All" }: { crop?: "All" | "Corn" | "Pal
           </div>
 
           <div className="rounded-xl border border-slate-100 p-3 max-h-[320px] overflow-auto">
-            <div className="text-xs text-slate-500 mb-2 px-1">Top performers</div>
+            <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-2 px-1">
+              <Trophy className="h-3.5 w-3.5 text-amber-400" /> Top performers
+            </div>
             {ranked.length === 0 ? (
               <div className="text-xs text-slate-400 px-1 py-2">No barangays have live predictions yet.</div>
             ) : (
-              <div className="space-y-1.5">
-                {ranked.slice(0, 10).map((b: any, i: number) => (
-                  <div key={b.name} className="flex items-center gap-2 text-sm px-1">
-                    <span className="w-4 text-xs text-slate-400">{i + 1}</span>
-                    <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: colorFor(b.y) }} />
-                    <span className="flex-1 text-slate-700 truncate">{b.label}</span>
-                    <span className="text-slate-500 text-xs">{b.y.toFixed(2)}</span>
-                  </div>
-                ))}
+              <div className="space-y-1">
+                {ranked.slice(0, 10).map((b: any, i: number) => {
+                  const medal = i === 0 ? "bg-amber-100 text-amber-700" : i === 1 ? "bg-slate-200 text-slate-600" : i === 2 ? "bg-orange-100 text-orange-700" : "bg-slate-50 text-slate-400";
+                  const barPct = Math.max(6, (b.y / ranked[0].y) * 100);
+                  return (
+                    <button
+                      key={b.name}
+                      onClick={() => setSelected((cur) => (cur === b.name ? null : b.name))}
+                      className={`w-full flex items-center gap-2 text-sm px-1.5 py-1.5 rounded-lg transition-colors ${selected === b.name ? "bg-emerald-50" : "hover:bg-slate-50"}`}
+                    >
+                      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] shrink-0 ${medal}`}>{i + 1}</span>
+                      <span className="flex-1 min-w-0 text-left">
+                        <span className="block text-slate-700 truncate">{b.label}</span>
+                        <span className="block h-1 mt-1 rounded-full bg-slate-100 overflow-hidden">
+                          <span className="block h-full rounded-full" style={{ width: `${barPct}%`, background: colorFor(b.y) }} />
+                        </span>
+                      </span>
+                      <span className="text-slate-500 text-xs shrink-0">{b.y.toFixed(2)}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

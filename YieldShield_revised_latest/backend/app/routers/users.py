@@ -61,6 +61,7 @@ _ADMIN_ROLE_LABEL = {
     "verification": "Verification Officer",
     "corn": "Corn Program Officer",
     "palay": "Palay Program Officer",
+    "analyst": "Data Analyst",
 }
 
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Wheat, Leaf, CheckCircle2, CalendarDays, Clock, CloudRain, ThermometerSun, Plus, Trash2, ListTodo, Droplets, FlaskConical, Tractor, Sprout, History } from "lucide-react";
-import { useStore, Prediction, CropTask, CropTaskType } from "../store";
+import { useStore, Prediction, CropTask, CropTaskType, taskDisplayText } from "../store";
 import { MONTHLY_CLIMATE } from "../data/binalonan";
 import { useT } from "../i18n";
 
@@ -9,6 +9,36 @@ const TASK_META: Record<CropTaskType, { label: string; icon: any; chip: string; 
   fertilizer:   { label: "Fertilizer",    icon: FlaskConical, chip: "bg-violet-50 text-violet-700 border-violet-200", dot: "bg-violet-500" },
   pre_planting: { label: "Pre-Planting",  icon: Tractor,      chip: "bg-orange-50 text-orange-700 border-orange-200", dot: "bg-orange-500" },
   other:        { label: "Other",         icon: ListTodo,     chip: "bg-slate-50 text-slate-600 border-slate-200",   dot: "bg-slate-400" },
+};
+
+// Solid fill colors for a calendar cell's whole-cell background —
+// exact hex match to TASK_META's dot classes (Tailwind's sky/violet/
+// orange/slate-500) for the four crop-task types, plus the legend's
+// own planting/harvest colors (emerald/amber), so every one of the six
+// legend entries has a matching fill and overlapping types can be
+// split into a hard-edged CSS gradient (Tailwind classes alone can't
+// express that split).
+const BLOCK_FILL_HEX: Record<string, string> = {
+  water: "#0ea5e9",
+  fertilizer: "#8b5cf6",
+  pre_planting: "#f97316",
+  other: "#94a3b8",
+  planting: "#10b981",
+  harvest: "#f59e0b",
+};
+// One shade lighter than each of the above — used only for the
+// single-activity diagonal gradient (a flat, uniform fill read as
+// noticeably flatter/duller once the cells got this large and
+// frequent). A day split between two+ overlapping activities stays a
+// flat hard-edged split instead — a gradient on each sliver would blur
+// exactly the boundary the split exists to keep clear.
+const BLOCK_FILL_LIGHT_HEX: Record<string, string> = {
+  water: "#38bdf8",
+  fertilizer: "#a78bfa",
+  pre_planting: "#fb923c",
+  other: "#cbd5e1",
+  planting: "#34d399",
+  harvest: "#fbbf24",
 };
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -35,13 +65,18 @@ function TodoList({ prefillDate, tasks }: { prefillDate?: string; tasks?: CropTa
   const [text, setText] = useState("");
   const [type, setType] = useState<CropTaskType>("water");
   const [date, setDate] = useState(prefillDate ?? new Date().toISOString().slice(0, 10));
+  // Optional — leaving this blank keeps the task a single-day item,
+  // same as before. Set it to mark a multi-day activity (e.g. "land
+  // prep, Jan 5-10"); the calendar shades every day in between.
+  const [endDate, setEndDate] = useState("");
   const [plotId, setPlotId] = useState<string>("");
 
   function add() {
     const t = text.trim();
     if (!t) return;
-    addTask({ type, text: t, date, predictionId: plotId || undefined });
+    addTask({ type, text: t, date, endDate: endDate && endDate > date ? endDate : undefined, predictionId: plotId || undefined });
     setText("");
+    setEndDate("");
   }
 
   const todayISO = new Date().toISOString().slice(0, 10);
@@ -87,17 +122,27 @@ function TodoList({ prefillDate, tasks }: { prefillDate?: string; tasks?: CropTa
         />
         <div className="flex gap-1.5">
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+            title="Start date"
             className="flex-1 h-9 px-2 rounded-lg border border-slate-200 text-xs focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none" />
+          <input type="date" value={endDate} min={date} onChange={(e) => setEndDate(e.target.value)}
+            title="End date (optional — leave blank for a single-day task)"
+            placeholder="End date"
+            className="flex-1 h-9 px-2 rounded-lg border border-slate-200 text-xs focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none" />
+        </div>
+        <div className="flex gap-1.5">
           <select value={plotId} onChange={(e) => setPlotId(e.target.value)}
             className="flex-1 h-9 px-2 rounded-lg border border-slate-200 text-xs bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none">
             <option value="">No crop</option>
-            {visiblePredictions.map((p) => <option key={p.id} value={p.id}>{p.plotId}</option>)}
+            {visiblePredictions.map((p) => <option key={p.id} value={p.id}>{p.name || p.plotId}</option>)}
           </select>
           <button onClick={add} disabled={!text.trim()}
             className="h-9 w-9 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 flex items-center justify-center shrink-0">
             <Plus className="h-4 w-4 text-white" />
           </button>
         </div>
+        {endDate && endDate > date && (
+          <div className="text-[11px] text-slate-400">Spans {fmtShort(date)} – {fmtShort(endDate)}</div>
+        )}
       </div>
 
       {/* Items */}
@@ -105,25 +150,27 @@ function TodoList({ prefillDate, tasks }: { prefillDate?: string; tasks?: CropTa
         {visibleTasks.length === 0 && (
           <div className="px-4 py-6 text-xs text-slate-400 text-center">{t("cal.noReminders")}</div>
         )}
-        {pending.map((t) => {
-          const m = TASK_META[t.type];
+        {pending.map((task) => {
+          const m = TASK_META[task.type];
           const Icon = m.icon;
-          const overdue = t.date < todayISO;
+          const overdue = task.date < todayISO;
           return (
-            <div key={t.id} className="px-4 py-2.5 flex items-start gap-2.5 group hover:bg-slate-50">
-              <button onClick={() => toggleTask(t.id)} className="shrink-0 mt-0.5">
+            <div key={task.id} className="px-4 py-2.5 flex items-start gap-2.5 group hover:bg-slate-50">
+              <button onClick={() => toggleTask(task.id)} className="shrink-0 mt-0.5">
                 <CheckCircle2 className="h-4 w-4 text-slate-200 hover:text-emerald-500 transition-colors" />
               </button>
               <div className="flex-1 min-w-0">
-                <div className="text-sm text-slate-700 leading-snug">{t.text}</div>
+                <div className="text-sm text-slate-700 leading-snug">{taskDisplayText(task, t)}</div>
                 <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                   <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] border ${m.chip}`}>
                     <Icon className="h-2.5 w-2.5" /> {m.label}
                   </span>
-                  <span className={`text-[10px] ${overdue ? "text-rose-500" : "text-slate-400"}`}>{overdue ? "Overdue · " : ""}{fmtShort(t.date)}</span>
+                  <span className={`text-[10px] ${overdue ? "text-rose-500" : "text-slate-400"}`}>
+                    {overdue ? "Overdue · " : ""}{task.endDate && task.endDate > task.date ? `${fmtShort(task.date)} – ${fmtShort(task.endDate)}` : fmtShort(task.date)}
+                  </span>
                 </div>
               </div>
-              <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-400 transition-all shrink-0 mt-0.5">
+              <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-400 transition-all shrink-0 mt-0.5">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -134,13 +181,13 @@ function TodoList({ prefillDate, tasks }: { prefillDate?: string; tasks?: CropTa
             <div className="px-4 py-1.5 bg-slate-50">
               <span className="text-[10px] text-slate-400 uppercase tracking-wide">Completed</span>
             </div>
-            {completed.map((t) => (
-              <div key={t.id} className="px-4 py-2.5 flex items-center gap-2.5 group hover:bg-slate-50">
-                <button onClick={() => toggleTask(t.id)} className="shrink-0">
+            {completed.map((task) => (
+              <div key={task.id} className="px-4 py-2.5 flex items-center gap-2.5 group hover:bg-slate-50">
+                <button onClick={() => toggleTask(task.id)} className="shrink-0">
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                 </button>
-                <span className="flex-1 text-sm text-slate-400 line-through leading-snug">{t.text}</span>
-                <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-400 transition-all shrink-0">
+                <span className="flex-1 text-sm text-slate-400 line-through leading-snug">{taskDisplayText(task, t)}</span>
+                <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-400 transition-all shrink-0">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -181,7 +228,7 @@ export function Calendar() {
   const fieldOptions = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of visiblePredictions) {
-      if (p.fieldId && (cropFilter === "All" || p.crop === cropFilter)) map.set(p.fieldId, p.plotId);
+      if (p.fieldId && (cropFilter === "All" || p.crop === cropFilter)) map.set(p.fieldId, p.name || p.plotId);
     }
     return Array.from(map.entries());
   }, [visiblePredictions, cropFilter]);
@@ -206,7 +253,7 @@ export function Calendar() {
         .map((p) => ({
           id: p.id,
           crop: p.crop,
-          label: `${p.plotId} · ${p.crop === "Palay (Rice)" ? "Palay" : "Corn"}`,
+          label: `${p.name || p.plotId} · ${p.crop === "Palay (Rice)" ? "Palay" : "Corn"}`,
           present: !p.harvestDate,
         })),
     [filteredPredictions]
@@ -258,10 +305,14 @@ export function Calendar() {
   const events = useMemo<FarmEvent[]>(() => {
     const list: FarmEvent[] = [];
     scopedPredictions.forEach((p) => {
-      const planting = new Date(p.plantingDate);
-      list.push({ date: planting, type: "planting", label: `Plant ${p.crop === "Palay (Rice)" ? "Palay" : "Corn"} · ${p.plotId}`, crop: p.crop, plotId: p.plotId, prediction: p });
+      // "T00:00:00" forces local-midnight parsing — a bare "YYYY-MM-DD"
+      // string parses as UTC midnight instead, which can land on the
+      // previous local calendar day for anyone west of UTC (matches
+      // fmtShort's handling below).
+      const planting = new Date(p.plantingDate + "T00:00:00");
+      list.push({ date: planting, type: "planting", label: `Plant ${p.crop === "Palay (Rice)" ? "Palay" : "Corn"} · ${p.name || p.plotId}`, crop: p.crop, plotId: p.plotId, prediction: p });
       const harvest = addDays(planting, harvestDays(p.crop));
-      list.push({ date: harvest, type: "harvest", label: `Harvest ${p.crop === "Palay (Rice)" ? "Palay" : "Corn"} · ${p.plotId}`, crop: p.crop, plotId: p.plotId, prediction: p });
+      list.push({ date: harvest, type: "harvest", label: `Harvest ${p.crop === "Palay (Rice)" ? "Palay" : "Corn"} · ${p.name || p.plotId}`, crop: p.crop, plotId: p.plotId, prediction: p });
     });
     return list;
   }, [scopedPredictions]);
@@ -282,7 +333,11 @@ export function Calendar() {
 
   function tasksOn(date: Date | null): CropTask[] {
     if (!date) return [];
-    return filteredTasks.filter((t) => sameDay(new Date(t.date + "T00:00:00"), date));
+    // ISO comparison (not sameDay on Date objects) so a multi-day task
+    // matches every day in its [date, endDate] range, not just its
+    // start day.
+    const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return filteredTasks.filter((t) => iso >= t.date && iso <= (t.endDate ?? t.date));
   }
 
   const selectedEvents = selected ? eventsOn(selected) : [];
@@ -401,53 +456,98 @@ export function Calendar() {
           {/* Day cells */}
           <div className="grid grid-cols-7">
             {cells.map((date, i) => {
-              if (!date) return <div key={`empty-${i}`} className="min-h-[92px] border-b border-r border-slate-50" />;
+              if (!date) return <div key={`empty-${i}`} className="min-h-[112px] border-b border-r border-slate-50" />;
               const dayEvents = eventsOn(date);
               const dayTasks = tasksOn(date);
               const isToday = sameDay(date, today);
               const isSelected = selected && sameDay(date, selected);
               const plantingEvts = dayEvents.filter((e) => e.type === "planting");
               const harvestEvts = dayEvents.filter((e) => e.type === "harvest");
+              const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+              // Every crop-care task AND planting/harvest date fills the
+              // WHOLE cell with its legend color — including a single
+              // day with nothing else around it, which used to fall
+              // back to a tiny dot and looked inconsistent/plain next
+              // to a multi-day activity's full color block. A single
+              // day just becomes a 1-day "block" (its own start and
+              // end), still a solid colored rounded block, not a dot.
+              // Overlapping activity types split the cell into equal
+              // hard-edged slices (no blending) so each stays
+              // identifiable rather than one hiding the other.
+              type Block = { key: string; type: string; text: string; date: string; endDate?: string };
+              const blocks: Block[] = [
+                ...plantingEvts.map((e, idx) => ({ key: `p${idx}`, type: "planting", text: e.label, date: iso })),
+                ...harvestEvts.map((e, idx) => ({ key: `h${idx}`, type: "harvest", text: e.label, date: iso })),
+                ...dayTasks.map((tk) => ({ key: tk.id, type: tk.type as string, text: taskDisplayText(tk, t), date: tk.date, endDate: tk.endDate })),
+              ];
+              const blockTypes = Array.from(new Set(blocks.map((b) => b.type)));
+              const MAX_SLICES = 3;
+              const shownTypes = blockTypes.slice(0, MAX_SLICES);
+              const sliceOverflow = blockTypes.length - shownTypes.length;
+              const hasFill = shownTypes.length > 0;
+              // One section per activity type sharing this day — each
+              // gets an equal-height band with ITS OWN centered label,
+              // instead of every label stacked together at the top
+              // regardless of which color band it actually belongs to
+              // (illegible once a day had more than one activity).
+              // Rounding is per-section too: a band only rounds on the
+              // side where THAT specific activity actually starts/ends,
+              // not the cell as a whole — a single-activity day still
+              // reads as one clean rounded block since there's only one
+              // section either way.
+              const sections = shownTypes.map((tp) => {
+                const forType = blocks.filter((b) => b.type === tp);
+                return {
+                  type: tp,
+                  label: forType.filter((b) => b.date === iso).map((b) => b.text).join(" · "),
+                  roundLeft: forType.some((b) => b.date === iso),
+                  roundRight: forType.some((b) => (b.endDate ?? b.date) === iso),
+                };
+              });
               return (
                 <button
                   key={date.toISOString()}
                   onClick={() => setSelected(isSelected ? null : date)}
-                  className={`min-h-[92px] p-1.5 border-b border-r border-slate-50 text-left flex flex-col gap-1 transition-colors overflow-hidden ${
-                    isSelected ? "bg-emerald-50 ring-2 ring-inset ring-emerald-300" : isToday ? "bg-emerald-50/40" : "hover:bg-slate-50"
+                  className={`min-h-[112px] pt-1.5 px-1.5 pb-1.5 border-b border-r border-slate-50 text-left flex flex-col gap-1 transition-all overflow-hidden relative ${
+                    hasFill ? (isSelected ? "ring-2 ring-inset ring-emerald-400" : "") : isSelected ? "bg-emerald-50 ring-2 ring-inset ring-emerald-300" : isToday ? "bg-emerald-50/40" : "hover:bg-slate-50"
                   }`}
                 >
-                  <span className={`h-7 w-7 flex items-center justify-center rounded-full text-sm shrink-0 ${
-                    isToday ? "bg-emerald-600 text-white" : isSelected ? "text-emerald-800" : "text-slate-600"
+                  <span className={`h-8 w-8 flex items-center justify-center rounded-full text-base shrink-0 relative z-10 ${
+                    isToday ? "bg-emerald-600 text-white shadow-sm" : isSelected ? "text-emerald-800" : "text-slate-600"
                   }`}>
                     {date.getDate()}
                   </span>
-                  {(() => {
-                    // Combine planting/harvest events + crop tasks into one
-                    // mini agenda so the day cell shows what's actually due
-                    // (e.g. "Plow and prepare the field"), not just dots.
-                    type Item = { key: string; text: string; chip: string; done?: boolean };
-                    const items: Item[] = [
-                      ...plantingEvts.map((e, idx) => ({ key: `p${idx}`, text: e.label, chip: "bg-emerald-50 text-emerald-700" })),
-                      ...harvestEvts.map((e, idx) => ({ key: `h${idx}`, text: e.label, chip: "bg-amber-50 text-amber-700" })),
-                      ...dayTasks.map((task) => ({ key: task.id, text: task.text, chip: TASK_META[task.type].chip, done: task.done })),
-                    ];
-                    const MAX_SHOWN = 2;
-                    const shown = items.slice(0, MAX_SHOWN);
-                    const overflow = items.length - shown.length;
-                    if (items.length === 0) return null;
-                    return (
-                      <div className="flex flex-col gap-0.5 min-w-0">
-                        {shown.map((it) => (
-                          <span key={it.key} className={`block w-full truncate rounded px-1 py-0.5 text-[9px] leading-tight border ${it.chip} ${it.done ? "line-through opacity-60" : ""}`} title={it.text}>
-                            {it.text}
-                          </span>
-                        ))}
-                        {overflow > 0 && (
-                          <span className="text-[9px] text-slate-400 px-1">+{overflow} {t("cal.more")}</span>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {sections.length > 0 && (
+                    <div className="flex-1 flex flex-col gap-0.5 -mx-1.5 -mb-1.5 mt-0.5">
+                      {sections.map((s) => (
+                        <div
+                          key={s.type}
+                          title={s.label || undefined}
+                          className="flex-1 flex items-center justify-center text-center px-1.5 py-0.5 min-h-[20px] hover:brightness-110 transition-all"
+                          style={{
+                            background: `linear-gradient(135deg, ${BLOCK_FILL_LIGHT_HEX[s.type]} 0%, ${BLOCK_FILL_HEX[s.type]} 100%)`,
+                            borderTopLeftRadius: s.roundLeft ? "8px" : 0,
+                            borderBottomLeftRadius: s.roundLeft ? "8px" : 0,
+                            borderTopRightRadius: s.roundRight ? "8px" : 0,
+                            borderBottomRightRadius: s.roundRight ? "8px" : 0,
+                            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 4px rgba(0,0,0,0.08)",
+                          }}
+                        >
+                          {s.label && (
+                            <span
+                              className="text-white text-xs font-medium leading-tight truncate max-w-full"
+                              style={{ textShadow: "0 1px 2px rgba(0,0,0,0.45)" }}
+                            >
+                              {s.label}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {sliceOverflow > 0 && (
+                    <span className="text-[9px] text-slate-400 relative z-10">+{sliceOverflow} more {t("cal.more")}</span>
+                  )}
                 </button>
               );
             })}
@@ -469,6 +569,9 @@ export function Calendar() {
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
               <span className="h-2.5 w-2.5 rounded-full bg-orange-500" /> {t("cal.prePlanting")}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> {t("cal.other")}
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
               <span className="h-5 w-5 rounded-full bg-emerald-600 flex items-center justify-center text-white text-[9px]">•</span> {t("cal.today")}
@@ -494,14 +597,14 @@ export function Calendar() {
                 {selectedEvents.length === 0 && selectedTasks.length === 0 && (
                   <div className="px-4 py-6 text-xs text-slate-400 text-center">{t("cal.noEvents")}</div>
                 )}
-                {selectedTasks.map((t) => {
-                  const m = TASK_META[t.type];
+                {selectedTasks.map((task) => {
+                  const m = TASK_META[task.type];
                   const Icon = m.icon;
                   return (
-                    <button key={t.id} onClick={() => toggleTask(t.id)} className="w-full px-4 py-3 hover:bg-slate-50 text-left flex items-start gap-3">
-                      <CheckCircle2 className={`mt-0.5 h-4 w-4 shrink-0 ${t.done ? "text-emerald-500" : "text-slate-200"}`} />
+                    <button key={task.id} onClick={() => toggleTask(task.id)} className="w-full px-4 py-3 hover:bg-slate-50 text-left flex items-start gap-3">
+                      <CheckCircle2 className={`mt-0.5 h-4 w-4 shrink-0 ${task.done ? "text-emerald-500" : "text-slate-200"}`} />
                       <div className="min-w-0">
-                        <div className={`text-xs ${t.done ? "text-slate-400 line-through" : "text-slate-700"}`}>{t.text}</div>
+                        <div className={`text-xs ${task.done ? "text-slate-400 line-through" : "text-slate-700"}`}>{taskDisplayText(task, t)}</div>
                         <div className="mt-0.5"><span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] border ${m.chip}`}><Icon className="h-2.5 w-2.5" /> {m.label}</span></div>
                       </div>
                     </button>

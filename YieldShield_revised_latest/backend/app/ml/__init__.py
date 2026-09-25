@@ -21,6 +21,7 @@ from . import features, model as _model
 ModelNotAvailable = _model.ModelNotAvailable
 FeatureLookupError = features.FeatureLookupError
 get_model_info = _model.get_model_info
+reload = _model.reload
 
 # FarmInputRequest.crop is "Palay (Rice)" / "Corn" (UI label); the model
 # was trained on the DB's crop_type.crop_name values ("Palay" / "Corn").

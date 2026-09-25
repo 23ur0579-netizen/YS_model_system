@@ -14,13 +14,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..db import get_conn
 from ..deps import CurrentUser, get_current_user
-from ..farm_calendar import weather_refresh_note
+from ..farm_calendar import note_text_en, weather_refresh_note
 from ..schemas import CropTaskCreateRequest, CropTaskOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 _SELECT_SQL = """
-    SELECT task_id, user_id, input_log_id, task_type, text, due_date, done
+    SELECT task_id, user_id, input_log_id, task_type, text, due_date, end_date, done,
+           text_key, note_key, note_rainfall_mm
       FROM yieldshield.crop_task
 """
 
@@ -32,8 +33,12 @@ def _to_out(row) -> CropTaskOut:
         type=row["task_type"],
         text=row["text"],
         date=row["due_date"].isoformat(),
+        endDate=row["end_date"].isoformat() if row["end_date"] else None,
         done=row["done"],
         predictionId=str(row["input_log_id"]) if row["input_log_id"] is not None else None,
+        textKey=row["text_key"],
+        noteKey=row["note_key"],
+        noteRainfall=float(row["note_rainfall_mm"]) if row["note_rainfall_mm"] is not None else None,
     )
 
 
@@ -58,14 +63,24 @@ def refresh_weather_sensitive(user: CurrentUser = Depends(get_current_user)):
 
             updated = []
             for row in candidates:
-                new_text = weather_refresh_note(row["task_type"], row["text"], row["due_date"])
-                if new_text is None:
+                result = weather_refresh_note(row["task_type"], row["due_date"])
+                if result is None:
                     continue
+                note_key, note_rainfall = result
+                if note_key == row["note_key"] and note_rainfall == row["note_rainfall_mm"]:
+                    continue  # Nothing actually changed since last time.
+                # Plain-English "text" fallback keeps the same "base — note"
+                # shape it always has — the base part is whatever was there
+                # before any previously-appended note (farmer-typed custom
+                # tasks have no note_key/text_key at all, so this is a
+                # no-op split for those).
+                base_text_en = row["text"].split(" — ", 1)[0]
+                new_text = f"{base_text_en} — {note_text_en(note_key, note_rainfall)}" if note_key else base_text_en
                 cur.execute(
-                    "UPDATE yieldshield.crop_task SET text = %s WHERE task_id = %s",
-                    (new_text, row["task_id"]),
+                    "UPDATE yieldshield.crop_task SET text = %s, note_key = %s, note_rainfall_mm = %s WHERE task_id = %s",
+                    (new_text, note_key, note_rainfall, row["task_id"]),
                 )
-                row["text"] = new_text
+                row["text"], row["note_key"], row["note_rainfall_mm"] = new_text, note_key, note_rainfall
                 updated.append(row)
     return [_to_out(r) for r in updated]
 
@@ -86,11 +101,11 @@ def create_task(body: CropTaskCreateRequest, user: CurrentUser = Depends(get_cur
             input_log_id = int(body.predictionId) if body.predictionId else None
             cur.execute(
                 """
-                INSERT INTO yieldshield.crop_task (user_id, input_log_id, task_type, text, due_date)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO yieldshield.crop_task (user_id, input_log_id, task_type, text, due_date, end_date)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING task_id
                 """,
-                (user.user_id, input_log_id, body.type, body.text, body.date),
+                (user.user_id, input_log_id, body.type, body.text, body.date, body.end_date),
             )
             new_id = cur.fetchone()["task_id"]
             cur.execute(_SELECT_SQL + " WHERE task_id = %s", (new_id,))

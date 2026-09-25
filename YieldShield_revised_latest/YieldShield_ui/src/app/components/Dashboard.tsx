@@ -1,4 +1,4 @@
-import { TrendingUp, Wheat, Leaf, Droplets, ThermometerSun, MapPin, Plus, Megaphone, Pin, CalendarDays, ShieldAlert, BookOpen, Tag, Clock, X, Loader2 } from "lucide-react";
+import { TrendingUp, Wheat, Leaf, Droplets, ThermometerSun, MapPin, Plus, Megaphone, Pin, CalendarDays, ShieldAlert, BookOpen, Tag, Clock, X, Loader2, Sprout, ArrowRight } from "lucide-react";
 import { useState, useMemo } from "react";
 import {
   ComposedChart,
@@ -161,7 +161,7 @@ const TAG_META: Record<AnnouncementTag, { icon: any; chip: string }> = {
 };
 
 export function Dashboard() {
-  const { predictions, visiblePredictions, setCurrent, setView, user, announcements, users, weather, weatherError } = useStore();
+  const { predictions, visiblePredictions, setCurrent, setView, user, announcements, users, weather, weatherError, notifications } = useStore();
   const t = useT();
   const isAdmin = user?.role === "Admin";
   // Corn/Palay-assigned admins are locked to their crop — same
@@ -176,6 +176,22 @@ export function Dashboard() {
     [visiblePredictions, cropTab]
   );
   const [postOpen, setPostOpen] = useState(false);
+
+  // The live, non-persisted "what's in season" advisory GET /notifications
+  // already computes (see backend/app/season_advisory.py) — surfaced here
+  // too as a prominent banner, not just buried in the notification list,
+  // since deciding what to plant next is exactly the kind of thing a
+  // farmer wants on their home screen rather than having to go look for.
+  // Admins manage the whole municipality, not their own planting
+  // decision, so this stays farmer/technician-only (matches the
+  // backend's own gating on who gets this notification at all).
+  // Specifically the season/planting-window advisory — matched by its
+  // stable id prefix (see backend/app/routers/notifications.py's
+  // _season_advisory), not just category === "advisory", since that
+  // category now also covers the price and best-variety advisories,
+  // and this banner's own wording/CTA ("Add cropping") is written
+  // around the season one specifically.
+  const seasonAdvisory = !isAdmin ? notifications.find((n) => n.id.startsWith("season-")) : undefined;
 
   const recentAnnouncements = [...announcements]
     .sort((a, b) => {
@@ -265,6 +281,23 @@ export function Dashboard() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+      {seasonAdvisory && (
+        <div className="flex items-start sm:items-center gap-3 rounded-2xl border border-lime-200 bg-lime-50/70 px-5 py-4">
+          <div className="h-10 w-10 rounded-xl bg-lime-100 text-lime-700 flex items-center justify-center shrink-0">
+            <Sprout className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-lime-900">{seasonAdvisory.titleKey ? t(seasonAdvisory.titleKey, seasonAdvisory.params) : seasonAdvisory.title}</div>
+            <div className="text-sm text-lime-700/80 mt-0.5">{seasonAdvisory.bodyKey ? t(seasonAdvisory.bodyKey, seasonAdvisory.params) : seasonAdvisory.body}</div>
+          </div>
+          <button
+            onClick={() => setView("myfarm")}
+            className="shrink-0 hidden sm:flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-lime-700 hover:bg-lime-800 text-white text-sm"
+          >
+            {t("dash.plantNow")} <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
       {isCropLocked ? (
         <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100 text-xs text-emerald-700">
           {lockedCrop === "Corn" ? <Wheat className="h-3.5 w-3.5" /> : <Leaf className="h-3.5 w-3.5" />}

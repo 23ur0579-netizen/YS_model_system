@@ -113,7 +113,7 @@ export function Login() {
     api
       .login(siEmail.trim(), siPassword)
       .then((res) => {
-        api.saveToken(res.token);
+        api.saveToken(res.token, siRemember);
         // The API can also return "Agricultural Technician" — this UI
         // only distinguishes Farmer vs. staff, so fold it into Admin.
         const uiRole: "Farmer" | "Admin" = res.role === "Farmer" ? "Farmer" : "Admin";

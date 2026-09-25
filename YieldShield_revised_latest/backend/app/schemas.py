@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,50}$")
 
-AdminRole = Literal["master", "verification", "corn", "palay"]
+AdminRole = Literal["master", "verification", "corn", "palay", "analyst"]
 
 
 # ---------------------------------------------------------------------
@@ -83,6 +83,10 @@ class ResetPasswordRequest(BaseModel):
 # ---------------------------------------------------------------------
 class FarmInputRequest(BaseModel):
     plot_id: str = Field(..., min_length=1, max_length=50)
+    # Separate, optional free-text label — see migration 27. Purely for
+    # the farmer's own reference; plot_id/plot_code remains the unique
+    # identifier.
+    plot_name: str | None = Field(None, max_length=120)
     field_id: int | None = Field(None, description="Physical field (yieldshield.field) this cropping belongs to")
     barangay: str = Field(..., description="Barangay key/label as shown in the UI, e.g. 'Poblacion'")
     crop: str = Field(..., description='"Palay (Rice)" or "Corn"')
@@ -164,6 +168,8 @@ class PredictionUpdateRequest(BaseModel):
     quantity: float | None = Field(None, ge=0)
     quantity_unit: str | None = Field(None, max_length=30)
     notes: str | None = Field(None, max_length=2000)
+    # See migration 27 — editable independently of the immutable plot_id.
+    plot_name: str | None = Field(None, max_length=120)
     variety: str | None = Field(None, max_length=120)
     technique: str | None = Field(None, max_length=120)
     spacing: float | None = Field(None, gt=0)
@@ -199,6 +205,7 @@ class FarmOut(BaseModel):
     ownerId: str
     farmer: str
     plotId: str
+    plotName: str | None = None
     fieldId: str | None = None
     barangay: str
     crop: str
@@ -333,14 +340,28 @@ class CropTaskOut(BaseModel):
     type: Literal["water", "fertilizer", "pre_planting", "other"]
     text: str
     date: str
+    # Optional — see migration 28. None means this is still a single-day
+    # task; when set, the activity spans [date, endDate] inclusive.
+    endDate: str | None = None
     done: bool
     predictionId: str | None = None
+    # Optional — see migration 32. textKey matches an i18n.tsx key for
+    # an auto-generated activity (None for a farmer-typed custom task,
+    # which has no translation to look up — the app just shows `text`
+    # as-is for those). noteKey/noteRainfall are the live weather note
+    # attached to some near-term tasks, kept separate from textKey
+    # since a task can have an activity translation with or without a
+    # note, and the note's own text varies independently.
+    textKey: str | None = None
+    noteKey: str | None = None
+    noteRainfall: float | None = None
 
 
 class CropTaskCreateRequest(BaseModel):
     type: Literal["water", "fertilizer", "pre_planting", "other"]
     text: str = Field(..., min_length=1, max_length=255)
     date: _dt.date
+    end_date: _dt.date | None = None
     predictionId: str | None = None
 
 
@@ -542,9 +563,17 @@ class NotificationOut(BaseModel):
     body: str
     time: str
     read: bool
-    category: Literal["alert", "weather", "prediction", "harvest", "task", "system"]
+    category: Literal["alert", "weather", "prediction", "harvest", "task", "system", "advisory"]
     plotId: str | None = None
     barangay: str | None = None
+    # Optional — when present, the frontend renders titleKey/bodyKey via
+    # its own i18n.tsx (translate(lang, key, params)) instead of the
+    # plain-English title/body above, which stay only as a fallback for
+    # anything that doesn't look for these two fields yet. See
+    # app/advisory_types.py.
+    titleKey: str | None = None
+    bodyKey: str | None = None
+    params: dict[str, str | int | float] | None = None
 
 
 # ---------------------------------------------------------------------
@@ -565,3 +594,16 @@ class PushSubscribeRequest(BaseModel):
 class PushUnsubscribeRequest(BaseModel):
     endpoint: str = Field(..., max_length=2000)
 
+
+# ---------------------------------------------------------------------
+# Admin-triggered model retraining (see app/ml_retrain.py). Status is
+# process-local (see that module's docstring), not a DB table, so this
+# just mirrors its in-memory state dict shape.
+# ---------------------------------------------------------------------
+class ModelRetrainStatusOut(BaseModel):
+    status: Literal["idle", "running", "succeeded", "failed"]
+    step: Literal["extracting_data", "training", "copying_artifacts"] | None = None
+    startedAt: str | None = None
+    finishedAt: str | None = None
+    error: str | None = None
+    triggeredBy: str | None = None

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Search } from "lucide-react";
+import { ChevronDown, Plus, Search } from "lucide-react";
 
 export type SearchableOption = {
   value: string;
@@ -20,12 +20,23 @@ export function SearchableSelect({
   options,
   placeholder,
   className,
+  allowCustom,
+  customLabel,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: SearchableOption[];
   placeholder?: string;
   className?: string;
+  // When true, typing something that matches no existing option shows
+  // an "＋ Add '<query>'" row that commits the typed text itself as the
+  // value — for fields like crop variety where the curated/catalog list
+  // can never cover every locally-grown or farmer-saved variety, and
+  // forcing a pick from "No matches" left no way to actually enter one.
+  allowCustom?: boolean;
+  // Optional override for the add-row's label, e.g. "Add custom variety".
+  // Defaults to a generic "Add '<query>'".
+  customLabel?: (query: string) => string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -56,6 +67,21 @@ export function SearchableSelect({
 
   const selected = options.find((o) => o.value === value);
 
+  // Only offer "add custom" once there's real typed text with no exact
+  // (case-insensitive) match already in the list — an exact match means
+  // the farmer just re-typed an existing option, not a new one.
+  const trimmedQuery = query.trim();
+  const showAddCustom =
+    allowCustom &&
+    trimmedQuery.length > 0 &&
+    !options.some((o) => o.label.toLowerCase() === trimmedQuery.toLowerCase() || o.value.toLowerCase() === trimmedQuery.toLowerCase());
+
+  function commitCustom() {
+    if (!trimmedQuery) return;
+    onChange(trimmedQuery);
+    setOpen(false);
+  }
+
   return (
     <div ref={containerRef} className="relative">
       <div className="relative">
@@ -75,7 +101,7 @@ export function SearchableSelect({
       </div>
       {open && (
         <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg py-1">
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !showAddCustom ? (
             <div className="px-3 py-2 text-sm text-slate-400">No matches</div>
           ) : (
             filtered.map((o) => (
@@ -92,6 +118,16 @@ export function SearchableSelect({
                 {o.subtitle && <div className="text-xs text-slate-400">{o.subtitle}</div>}
               </button>
             ))
+          )}
+          {showAddCustom && (
+            <button
+              type="button"
+              onClick={commitCustom}
+              className="w-full text-left px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 border-t border-slate-100 flex items-center gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span>{customLabel ? customLabel(trimmedQuery) : `Add "${trimmedQuery}"`}</span>
+            </button>
           )}
         </div>
       )}

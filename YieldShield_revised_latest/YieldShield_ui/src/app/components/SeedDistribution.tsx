@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Sprout, Plus, X, Loader2, Trash2, Pencil, CheckCircle2, Package, Wheat } from "lucide-react";
 import { useStore, adminCrop, keyToLabel, labelToKey } from "../store";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { BARANGAY_DATA } from "../data/binalonan";
 import * as api from "../lib/api";
 import { toast } from "sonner";
@@ -36,6 +37,10 @@ export function SeedDistribution() {
   const isCropLocked = lockedCrop === "Corn" || lockedCrop === "Palay (Rice)";
 
   const [records, setRecords] = useState<api.SeedDistribution[]>([]);
+  // Which record is pending a delete confirmation, if any — replaces
+  // the native browser confirm() popup with the same styled dialog
+  // the rest of the app uses for destructive actions.
+  const [confirmDelete, setConfirmDelete] = useState<api.SeedDistribution | null>(null);
   const [loading, setLoading] = useState(true);
   const [cropFilter, setCropFilter] = useState<"Palay (Rice)" | "Corn" | "all">(isCropLocked ? (lockedCrop as "Palay (Rice)" | "Corn") : "all");
   const [barangayFilter, setBarangayFilter] = useState<string>("all");
@@ -108,7 +113,6 @@ export function SeedDistribution() {
   }
 
   async function remove(r: api.SeedDistribution) {
-    if (!confirm(`Delete this seed distribution schedule for ${labelFor(r.barangay)}?`)) return;
     try {
       await api.deleteSeedDistribution(r.id);
       setRecords((rs) => rs.filter((x) => x.id !== r.id));
@@ -239,7 +243,7 @@ export function SeedDistribution() {
                         <button onClick={() => setFormOpen(r)} title="Edit" className="h-8 w-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center">
                           <Pencil className="h-4 w-4" />
                         </button>
-                        <button onClick={() => remove(r)} title="Delete" className="h-8 w-8 rounded-lg hover:bg-rose-50 text-rose-500 flex items-center justify-center">
+                        <button onClick={() => setConfirmDelete(r)} title="Delete" className="h-8 w-8 rounded-lg hover:bg-rose-50 text-rose-500 flex items-center justify-center">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
@@ -264,6 +268,14 @@ export function SeedDistribution() {
             });
             setFormOpen(null);
           }}
+        />
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete this seed distribution schedule for ${labelFor(confirmDelete.barangay)}?`}
+          confirmLabel="Delete schedule"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => { remove(confirmDelete); setConfirmDelete(null); }}
         />
       )}
     </div>

@@ -13,7 +13,9 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem("ys_token");
+  // getToken() (defined below) checks this tab's own sessionStorage
+  // first, falling back to localStorage only for a "remembered" login.
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
@@ -41,7 +43,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export type AdminRole = "master" | "verification" | "corn" | "palay";
+export type AdminRole = "master" | "verification" | "corn" | "palay" | "analyst";
 
 export type LoginResponse = {
   token: string;
@@ -91,6 +93,7 @@ export function resetPassword(token: string, new_password: string) {
 
 export type FarmInputPayload = {
   plot_id: string;
+  plot_name?: string | null;
   field_id?: number | null;
   barangay: string; // full label, e.g. "Pasileng Norte" — not the UI's internal key
   crop: "Palay (Rice)" | "Corn";
@@ -155,6 +158,7 @@ export type FarmInputUpdatePayload = Partial<{
   quantity: number;
   quantity_unit: string;
   notes: string;
+  plot_name: string | null;
   variety: string | null;
   technique: string | null;
   spacing: number | null;
@@ -284,6 +288,7 @@ export type ApiFarm = {
   ownerId: string;
   farmer: string;
   plotId: string;
+  plotName: string | null;
   fieldId: string | null;
   barangay: string; // full label — convert with store.tsx's labelToKey()
   crop: "Palay (Rice)" | "Corn";
@@ -315,15 +320,34 @@ export function listFarms() {
   return request<ApiFarm[]>("/farms");
 }
 
-export function saveToken(token: string) {
-  localStorage.setItem("ys_token", token);
+export function saveToken(token: string, remember: boolean = true) {
+  // sessionStorage: cleared per-tab, so a login here never bleeds into
+  // (or gets overwritten by) another tab's session — see getToken.
+  // localStorage: opted into via "Keep me signed in" on the login
+  // form — survives closing/reopening the browser. Always write to
+  // sessionStorage regardless of `remember`, so THIS tab is correct
+  // immediately either way; also always clear the other slot so a
+  // stale token from a previous, differently-checked login here never
+  // lingers and gets picked up by a future tab that falls back to it.
+  sessionStorage.setItem("ys_token", token);
+  if (remember) {
+    localStorage.setItem("ys_token", token);
+  } else {
+    localStorage.removeItem("ys_token");
+  }
 }
 
 export function getToken() {
-  return localStorage.getItem("ys_token");
+  // Prefer this tab's own session; only a "remembered" login (opted
+  // into shared, cross-restart storage) falls back to localStorage —
+  // see saveToken. Two *different* tabs that both check "Keep me
+  // signed in" still share that one slot, same trade-off as most
+  // sites' remember-me: expected, not a bug, and opt-in.
+  return sessionStorage.getItem("ys_token") ?? localStorage.getItem("ys_token");
 }
 
 export function clearToken() {
+  sessionStorage.removeItem("ys_token");
   localStorage.removeItem("ys_token");
 }
 
@@ -377,15 +401,19 @@ export type ApiCropTask = {
   type: "water" | "fertilizer" | "pre_planting" | "other";
   text: string;
   date: string;
+  endDate: string | null;
   done: boolean;
   predictionId: string | null;
+  textKey?: string | null;
+  noteKey?: string | null;
+  noteRainfall?: number | null;
 };
 
 export function listTasks() {
   return request<ApiCropTask[]>("/tasks");
 }
 
-export function createTask(input: { type: "water" | "fertilizer" | "pre_planting" | "other"; text: string; date: string; predictionId?: string | null }) {
+export function createTask(input: { type: "water" | "fertilizer" | "pre_planting" | "other"; text: string; date: string; end_date?: string | null; predictionId?: string | null }) {
   return request<ApiCropTask>("/tasks", { method: "POST", body: JSON.stringify(input) });
 }
 
@@ -449,9 +477,12 @@ export type ApiNotification = {
   body: string;
   time: string;
   read: boolean;
-  category: "alert" | "weather" | "prediction" | "harvest" | "system";
+  category: "alert" | "weather" | "prediction" | "harvest" | "task" | "system" | "advisory";
   plotId?: string | null;
   barangay?: string | null;
+  titleKey?: string | null;
+  bodyKey?: string | null;
+  params?: Record<string, string | number> | null;
 };
 
 export function listNotifications() {
@@ -598,7 +629,7 @@ export type ReportParams = {
 };
 
 async function downloadReport(path: string, params: ReportParams, filenameFallback: string) {
-  const token = localStorage.getItem("ys_token");
+  const token = getToken();
   const query = new URLSearchParams(params as unknown as Record<string, string>).toString();
   let res: Response;
   try {
@@ -741,4 +772,27 @@ export type CropVariety = {
 export function listCropVarieties(crop?: "Palay (Rice)" | "Corn") {
   const query = crop ? `?crop=${encodeURIComponent(crop)}` : "";
   return request<CropVariety[]>(`/crop-varieties${query}`);
+}
+
+// ---------------------------------------------------------------------
+// Admin-triggered model retraining (analyst/master tiers only — see
+// backend/app/routers/model_admin.py and ModelAdmin.tsx). Status is
+// polled, not pushed, since the retrain runs as a background job on
+// the server.
+// ---------------------------------------------------------------------
+export type ModelRetrainStatus = {
+  status: "idle" | "running" | "succeeded" | "failed";
+  step: "extracting_data" | "training" | "copying_artifacts" | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  triggeredBy: string | null;
+};
+
+export function getModelRetrainStatus() {
+  return request<ModelRetrainStatus>("/admin/model/status");
+}
+
+export function triggerModelRetrain() {
+  return request<ModelRetrainStatus>("/admin/model/retrain", { method: "POST" });
 }

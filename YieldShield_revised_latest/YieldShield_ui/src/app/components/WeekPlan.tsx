@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Droplets, Sprout, Wheat, CalendarClock, CheckCircle2, Circle, ListChecks, CalendarDays, Tractor } from "lucide-react";
-import { useStore, maturityDays, plantingWindow } from "../store";
+import { useStore, maturityDays, plantingWindow, taskDisplayText } from "../store";
 import { useT } from "../i18n";
 
 const DAY = 86400000;
@@ -49,13 +49,13 @@ export function WeekPlan() {
       const overdue = due < now - DAY / 2;
       const today = !overdue && due <= now + DAY;
       const cropping = task.predictionId ? predictionsById.get(task.predictionId) : undefined;
-      const plotLabel = cropping ? `${cropping.plotId} · ${cropping.crop.replace(" (Rice)", "")}` : undefined;
+      const plotLabel = cropping ? `${cropping.name || cropping.plotId} · ${cropping.crop.replace(" (Rice)", "")}` : undefined;
       const category = task.type === "water" ? t("week.water") : task.type === "fertilizer" ? t("week.fertilize") : task.type === "pre_planting" ? t("week.prePlanting") : "";
       out.push({
         id: task.id,
         icon: task.type === "water" ? Droplets : task.type === "fertilizer" ? Sprout : task.type === "pre_planting" ? Tractor : CalendarClock,
         tint: task.type === "water" ? "bg-sky-50 text-sky-600" : task.type === "fertilizer" ? "bg-amber-50 text-amber-600" : task.type === "pre_planting" ? "bg-orange-50 text-orange-600" : "bg-slate-100 text-slate-500",
-        label: task.text,
+        label: taskDisplayText(task, t),
         detail: plotLabel ? `${category} · ${plotLabel}` : category,
         when: overdue ? t("week.overdue") : today ? t("week.today") : new Date(task.date).toLocaleDateString("en-PH", { weekday: "short" }),
         urgent: overdue || today,
@@ -66,7 +66,7 @@ export function WeekPlan() {
 
     // 2) Plots nearing harvest, and not-yet-planted plots whose planting window is open.
     for (const p of visiblePredictions) {
-      const label = `${p.plotId} · ${p.crop.replace(" (Rice)", "")}`;
+      const label = `${p.name || p.plotId} · ${p.crop.replace(" (Rice)", "")}`;
       const harvested = p.actualYield != null || !!p.harvestDate;
       const plantAt = new Date(p.plantingDate).getTime();
       const alreadyPlanted = plantAt <= now;

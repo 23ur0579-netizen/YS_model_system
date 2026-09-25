@@ -15,7 +15,7 @@ function initialsFromName(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export type View = "dashboard" | "yield" | "recommend" | "planning" | "myfarm" | "calendar" | "users" | "farms" | "settings" | "notifications" | "simulation" | "audit" | "profile" | "seeddist";
+export type View = "dashboard" | "yield" | "recommend" | "planning" | "myfarm" | "calendar" | "users" | "farms" | "settings" | "notifications" | "simulation" | "audit" | "profile" | "seeddist" | "model";
 
 const ALL_VIEWS: View[] = ["dashboard", "yield", "recommend", "planning", "myfarm", "calendar", "users", "farms", "settings", "notifications", "simulation", "audit", "profile", "seeddist"];
 
@@ -40,13 +40,14 @@ export type Lang = "en" | "tl" | "ilo";
 // Admin privilege tiers. A "master" admin can assign privileges and create
 // other admin accounts; a "verification" admin reviews account registrations;
 // "corn" / "palay" admins manage a single commodity.
-export type AdminRole = "master" | "verification" | "corn" | "palay";
+export type AdminRole = "master" | "verification" | "corn" | "palay" | "analyst";
 
 export const ADMIN_ROLE_META: Record<AdminRole, { label: string; short: string; desc: string }> = {
   master:       { label: "Master Administrator", short: "Master",       desc: "Full control — assigns privileges and creates admin accounts." },
   verification: { label: "Verification Officer",  short: "Verification", desc: "Reviews and approves farmer account registrations." },
   corn:         { label: "Corn Program Officer",  short: "Corn",         desc: "Manages corn croppings, advisories, and planning." },
   palay:        { label: "Palay Program Officer", short: "Palay",        desc: "Manages palay croppings, advisories, and planning." },
+  analyst:      { label: "Data Analyst",          short: "Analyst",      desc: "Monitors prediction quality and triggers model retraining." },
 };
 
 // Which crop a given admin is allowed to act on. Master admins see everything.
@@ -54,6 +55,9 @@ export function adminCrop(role?: AdminRole): "Palay (Rice)" | "Corn" | "all" | "
   if (role === "corn") return "Corn";
   if (role === "palay") return "Palay (Rice)";
   if (role === "master") return "all";
+  // Analysts assess the model across both crops — locking them to one
+  // would hide half of exactly the data they're supposed to review.
+  if (role === "analyst") return "all";
   return "none";
 }
 
@@ -62,6 +66,11 @@ export type Prediction = {
   ownerId: string;
   farmer: string;
   plotId: string;
+  // Separate, optional free-text label the farmer can set/edit for
+  // their own reference — plotId/plot_code stays the auto-generated,
+  // immutable identifier (see migration 27 and MyFarm.tsx's
+  // generatePlotCode).
+  name?: string;
   fieldId?: string;
   barangay: string;
   crop: "Palay (Rice)" | "Corn";
@@ -194,12 +203,40 @@ export type CropTask = {
   type: CropTaskType;
   text: string;
   date: string;
+  // Optional — when set, this activity spans [date, endDate] inclusive
+  // instead of being a single-day item (see migration 28 / Calendar.tsx's
+  // continuous-range shading).
+  endDate?: string;
   done: boolean;
   predictionId?: string;
+  // Optional — see migration 32. textKey matches an i18n.tsx key for an
+  // auto-generated activity (undefined for a farmer-typed custom task,
+  // which has no translation to look up — `text` is shown as-is for
+  // those). noteKey/noteRainfall are the live weather note attached to
+  // some near-term tasks, rendered as a separate line — see
+  // Calendar.tsx.
+  textKey?: string;
+  noteKey?: string;
+  noteRainfall?: number;
 };
 
+// Resolves a task's actual displayed text — via its translation key
+// (see migration 32 / farm_calendar.py) when it's an auto-generated
+// activity, so it renders in whatever language is currently selected,
+// or its literal `text` as-is for a farmer-typed custom task (no key
+// to translate) or a pre-migration row. The weather note, when
+// present, is its own separate key/params — appended the same way the
+// backend always joined them ("activity — note"), just resolved
+// client-side now instead of baked in at generation time.
+export function taskDisplayText(task: CropTask, t: (key: string, params?: Record<string, string | number>) => string): string {
+  const base = task.textKey ? t(task.textKey) : task.text;
+  if (!task.noteKey) return base;
+  const note = t(task.noteKey, task.noteRainfall != null ? { rainfall: Math.round(task.noteRainfall) } : undefined);
+  return `${base} — ${note}`;
+}
+
 // Master-admin audit trail of privileged actions.
-export type AuditCategory = "verification" | "announcement" | "account" | "privilege" | "seed_distribution";
+export type AuditCategory = "verification" | "announcement" | "account" | "privilege" | "seed_distribution" | "model_retrain";
 export type AuditEntry = {
   id: string;
   at: number;                 // timestamp
@@ -211,7 +248,7 @@ export type AuditEntry = {
   target?: string;           // who/what was affected
 };
 
-export type NotifCategory = "alert" | "prediction" | "harvest" | "task" | "system" | "weather";
+export type NotifCategory = "alert" | "prediction" | "harvest" | "task" | "system" | "weather" | "advisory";
 export type AppNotification = {
   id: string;
   title: string;
@@ -221,6 +258,12 @@ export type AppNotification = {
   category: NotifCategory;
   plotId?: string;
   barangay?: string;
+  // When present, render via i18n.tsx's t(titleKey, params)/t(bodyKey,
+  // params) instead of the plain-English title/body above, which stay
+  // only as a fallback — see backend/app/advisory_types.py.
+  titleKey?: string;
+  bodyKey?: string;
+  params?: Record<string, string | number>;
 };
 
 export type AnnouncementTag = "advisory" | "program" | "schedule" | "policy" | "reminder";
@@ -266,11 +309,11 @@ type Store = {
   setView: (v: View) => void;
   login: (u: User) => void;
   logout: () => void;
-  addPrediction: (p: Omit<Prediction, "id" | "predictedYield" | "confidence" | "createdAt" | "ownerId"> & { ownerId?: string }) => Prediction;
+  addPrediction: (p: Omit<Prediction, "id" | "predictedYield" | "confidence" | "createdAt" | "ownerId"> & { ownerId?: string }, onSynced?: (result: Prediction | null) => void) => Prediction;
   // Returns a Promise, not the value directly — see the implementation:
   // a save failure must be reported and rolled back, not just left as
   // an optimistic local value that quietly stops matching the server.
-  updatePrediction: (id: string, patch: Partial<Omit<Prediction, "id" | "ownerId" | "predictedYield" | "confidence" | "createdAt">>) => Promise<Prediction | null>;
+  updatePrediction: (id: string, patch: Partial<Omit<Prediction, "id" | "ownerId" | "predictedYield" | "confidence" | "createdAt">>, onSynced?: (result: Prediction | null) => void) => Promise<Prediction | null>;
   setCurrent: (p: Prediction | null) => void;
   recordHarvest: (id: string, actualYield: number, harvestDate: string, harvestNotes?: string) => void;
   deletePrediction: (id: string) => void;
@@ -319,6 +362,8 @@ type Store = {
   // Interface language.
   lang: Lang;
   setLang: (l: Lang) => void;
+  tooltipsEnabled: boolean;
+  setTooltipsEnabled: (v: boolean) => void;
   // Display unit for yield figures. predictedYield/actualYield are always
   // stored/sent as metric tonnes per hectare (t/ha) — this only controls
   // how they're formatted/typed in the UI (see lib/units.ts).
@@ -390,6 +435,7 @@ function apiFarmToPrediction(f: api.ApiFarm): Prediction {
     ownerId: f.ownerId,
     farmer: f.farmer,
     plotId: f.plotId,
+    name: f.plotName ?? undefined,
     fieldId: f.fieldId ?? undefined,
     barangay: labelToKey(f.barangay),
     crop: f.crop,
@@ -455,7 +501,11 @@ function apiFieldToField(f: api.ApiField): Field {
 }
 
 function apiTaskToTask(t: api.ApiCropTask): CropTask {
-  return { id: t.id, ownerId: t.ownerId, type: t.type, text: t.text, date: t.date, done: t.done, predictionId: t.predictionId ?? undefined };
+  return {
+    id: t.id, ownerId: t.ownerId, type: t.type, text: t.text, date: t.date, endDate: t.endDate ?? undefined,
+    done: t.done, predictionId: t.predictionId ?? undefined,
+    textKey: t.textKey ?? undefined, noteKey: t.noteKey ?? undefined, noteRainfall: t.noteRainfall ?? undefined,
+  };
 }
 
 function apiAnnouncementToAnnouncement(a: api.ApiAnnouncement): Announcement {
@@ -472,6 +522,9 @@ function apiNotificationToAppNotification(n: api.ApiNotification): AppNotificati
     category: n.category,
     plotId: n.plotId ?? undefined,
     barangay: n.barangay ?? undefined,
+    titleKey: n.titleKey ?? undefined,
+    bodyKey: n.bodyKey ?? undefined,
+    params: n.params ?? undefined,
   };
 }
 
@@ -705,6 +758,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch {}
     return "en";
   });
+  // Whether to show the small "?" hint bubbles next to fields/terms
+  // across the app — on by default (most useful for people newer to
+  // the system), toggleable in Settings for anyone who finds them in
+  // the way once they already know the app. Purely a device-level
+  // display preference, so localStorage is enough — no account sync
+  // needed.
+  const [tooltipsEnabled, setTooltipsEnabledState] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem("yieldshield.tooltipsEnabled");
+      if (stored === "false") return false;
+    } catch {}
+    return true;
+  });
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [fields, setFields] = useState<Field[]>([]);
   const [current, setCurrent] = useState<Prediction | null>(null);
@@ -931,13 +997,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const visibleFields =
     !user || user.role === "Admin" ? fields : fields.filter((f) => f.ownerId === user.id);
 
-  // Restore the session on page load/reload. The JWT in localStorage
-  // survives a reload just fine, but `user` is plain React state and
-  // resets to null every time this component remounts -- without this,
-  // App.tsx's `if (!user) return <Login />` kicks in on every refresh
-  // even though the token is still valid. Ask the backend who we are,
-  // and only fall back to the login screen if that actually fails
-  // (expired/invalid token).
+  // Restore the session on page load/reload. The JWT in sessionStorage
+  // (per-tab — see api.ts's getToken/saveToken) survives a reload just
+  // fine, but `user` is plain React state and resets to null every time
+  // this component remounts -- without this, App.tsx's `if (!user)
+  // return <Login />` kicks in on every refresh even though the token
+  // is still valid. Ask the backend who we are, and only fall back to
+  // the login screen if that actually fails (expired/invalid token).
   useEffect(() => {
     if (!api.getToken()) {
       setAuthLoading(false);
@@ -1108,7 +1174,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setTasks([]);
       setAuditLog([]);
     },
-    addPrediction: (p) => {
+    addPrediction: (p, onSynced) => {
       const { yieldPerHa, confidence } = score(p);
       const pred: Prediction = {
         ...p,
@@ -1126,6 +1192,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api
         .submitFarmInput({
           plot_id: pred.plotId,
+          plot_name: pred.name || undefined,
           field_id: pred.fieldId ? Number(pred.fieldId) : undefined,
           barangay: keyToLabel(pred.barangay),
           crop: pred.crop,
@@ -1172,6 +1239,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           };
           setPredictions((prev) => prev.map((x) => (x.id === pred.id ? reconciled : x)));
           setCurrent((c) => (c && c.id === pred.id ? reconciled : c));
+          // The backend auto-generates this cropping's crop-care
+          // schedule (watering/fertilizer/etc. — see farm_input.py) in
+          // the same request that just resolved, so it already exists
+          // server-side by now. Re-fetch so Calendar.tsx and
+          // WeekPlan.tsx (both read the same `tasks` list) pick it up
+          // right away instead of only on the next full page reload.
+          refreshTasks().finally(() => onSynced?.(reconciled));
         })
         .catch((err) => {
           console.error("Failed to save the cropping record", err);
@@ -1182,6 +1256,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // or validation error), not just a generic network message.
           setPredictions((prev) => prev.filter((x) => x.id !== pred.id));
           setCurrent((c) => (c && c.id === pred.id ? null : c));
+          onSynced?.(null);
           toast.error(
             err instanceof api.ApiError
               ? `Couldn't save this cropping: ${err.message}`
@@ -1191,7 +1266,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       return pred;
     },
-    updatePrediction: (id, patch) => {
+    updatePrediction: (id, patch, onSynced) => {
       let updated: Prediction | null = null;
       let previous: Prediction | null = null;
       setPredictions((prev) =>
@@ -1207,6 +1282,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setCurrent((c) => (c && c.id === id && updated ? updated : c));
 
       if (!updated || isLocalId(id)) {
+        onSynced?.(updated);
         return Promise.resolve(updated);
       }
 
@@ -1220,6 +1296,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           quantity: patch.quantity,
           quantity_unit: patch.quantityUnit,
           notes: patch.notes,
+          plot_name: patch.name,
           variety: patch.variety,
           technique: patch.technique,
           spacing: patch.spacing,
@@ -1247,8 +1324,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // care schedule (see farm_input.py's update_farm_input) —
           // re-fetch so Calendar.tsx and WeekPlan.tsx (both read the
           // same `tasks` list) pick up the new due dates right away,
-          // not just on the next full reload.
-          refreshTasks();
+          // not just on the next full reload. onSynced fires once that
+          // refetch actually lands, so a caller's "syncing…" indicator
+          // (see MyFarm.tsx) reflects real completion, not just the
+          // PATCH response.
+          refreshTasks().finally(() => onSynced?.(reconciled));
           return reconciled;
         })
         .catch((err) => {
@@ -1265,6 +1345,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             setPredictions((prev) => prev.map((x) => (x.id === id ? revert : x)));
             setCurrent((c) => (c && c.id === id ? revert : c));
           }
+          onSynced?.(null);
           throw err;
         });
     },
@@ -1404,7 +1485,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const nt: CropTask = { ...t, id: localId("task"), ownerId: user?.id ?? "anonymous", done: false };
       setTasks((prev) => [...prev, nt]);
       api
-        .createTask({ type: t.type, text: t.text, date: t.date, predictionId: t.predictionId })
+        .createTask({ type: t.type, text: t.text, date: t.date, end_date: t.endDate, predictionId: t.predictionId })
         .then((saved) => setTasks((prev) => prev.map((x) => (x.id === nt.id ? apiTaskToTask(saved) : x))))
         .catch((err) => {
           console.error("Failed to save task", err);
@@ -1431,6 +1512,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setLang: (l: Lang) => {
       setLangState(l);
       try { localStorage.setItem("yieldshield.lang", l); } catch {}
+    },
+    tooltipsEnabled,
+    setTooltipsEnabled: (v: boolean) => {
+      setTooltipsEnabledState(v);
+      try { localStorage.setItem("yieldshield.tooltipsEnabled", String(v)); } catch {}
     },
     users,
     profile,

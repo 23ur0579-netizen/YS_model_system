@@ -376,7 +376,7 @@ function RegistrationDetailModal({ r, onClose }: { r: Registration; onClose: () 
   const isImage = r.idFileUrl?.startsWith("data:image/");
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onClick={onClose}>
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -623,7 +623,7 @@ function UserModal({ initial, canAssignAdmin, onClose, onSave }: { initial?: Man
             <div>
               <div className="text-sm text-slate-700 mb-1.5 flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-sky-600" /> Admin privilege</div>
               <div className="grid grid-cols-2 gap-2">
-                {(["master", "verification", "corn", "palay"] as AdminRole[]).map((r) => (
+                {(["master", "verification", "corn", "palay", "analyst"] as AdminRole[]).map((r) => (
                   <button key={r} type="button" onClick={() => set("adminRole", r)}
                     className={`text-left rounded-lg border p-2.5 transition-colors ${draft.adminRole === r ? "border-sky-400 bg-sky-50" : "border-slate-200 hover:bg-slate-50"}`}>
                     <div className="text-xs text-slate-800">{ADMIN_ROLE_META[r].label}</div>

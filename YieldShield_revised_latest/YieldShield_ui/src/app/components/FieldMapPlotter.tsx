@@ -349,7 +349,7 @@ export function FieldMapPlotter({
         </div>
       )}
 
-      <div className="rounded-lg border border-slate-200 overflow-hidden relative" style={{ height: 260 }}>
+      <div className="rounded-lg border border-slate-200 overflow-hidden relative h-[300px] sm:h-[420px] lg:h-[480px]">
         {!ready && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-50 text-slate-400 text-sm gap-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading map…

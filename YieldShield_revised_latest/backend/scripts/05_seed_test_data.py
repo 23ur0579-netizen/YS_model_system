@@ -91,6 +91,15 @@ from passlib.context import CryptContext
 load_dotenv()
 
 from app.config import settings  # noqa: E402
+# Same generator the live app uses (see app/routers/farm_input.py) —
+# importing it here instead of hand-maintaining a separate task list
+# means seeded schedules (including the fertilizer/land-prep date
+# ranges) can never drift out of sync with what a real cropping
+# submission actually produces. with_weather=False skips the live
+# weather-API calls generate_activities() otherwise makes per task —
+# irrelevant for seed data and would make seeding both slow and
+# non-deterministic across re-runs.
+from app.farm_calendar import generate_activities  # noqa: E402
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -197,7 +206,12 @@ STAFF = [
     ("Corn Program Admin",  "Admin",                   "corn",         "admin.corn"),
     ("Palay Program Admin", "Admin",                   "palay",        "admin.palay"),
     ("Field Technician",    "Agricultural Technician", None,           "technician"),
-    ("Data Analyst",        "Analyst",                 None,           "analyst"),
+    # Admin + admin_role="analyst" (not the older, separate top-level
+    # "Analyst" role/DB tier) — this is the tier that actually passes
+    # require_admin_role("analyst") on the model-retrain endpoint (see
+    # app/routers/model_admin.py) and can see the "Model" nav item
+    # (see Sidebar.tsx / store.tsx's ADMIN_ROLE_META).
+    ("Data Analyst",        "Admin",                   "analyst",      "admin.analyst"),
 ]
 
 # Real NSIC/PhilRice varieties, grouped by the DA seed-subsidy category
@@ -464,18 +478,25 @@ def make_field(cur, user_id, barangay_id, barangay, facts, area_ha, crop, lat, l
 def make_cropping(cur, user_id, field_id, barangay_id, ct_id, tech_id,
                   crop, facts, area_ha, plot_code, planting_date,
                   ecosystem, seed_type, variety, model_id, predicted_yield,
-                  confidence, actual_yield, harvest_date):
-    """One farm_profile (the plot) plus its farm_input_log (the cropping)."""
+                  confidence, actual_yield, harvest_date, plot_name=None):
+    """One farm_profile (the plot) plus its farm_input_log (the cropping).
+
+    plot_name (migration 27) is the optional, freely-editable label
+    that sits alongside the auto-generated plot_code — see MyFarm.tsx's
+    "Cropping name" field. None is fine (matches a cropping the farmer
+    never bothered to rename), which is why every existing caller that
+    doesn't pass it still works unchanged.
+    """
     cur.execute(
         """
         INSERT INTO yieldshield.farm_profile
             (user_id, barangay_id, crop_type_id, land_area_ha, soil_condition,
-             plot_code, field_id, filed_by_user_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             plot_code, plot_name, field_id, filed_by_user_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING farm_id
         """,
         (user_id, barangay_id, ct_id, area_ha, facts["soil"],
-         plot_code, field_id, user_id),
+         plot_code, plot_name, field_id, user_id),
     )
     farm_id = cur.fetchone()["farm_id"]
 
@@ -558,28 +579,22 @@ def make_cropping(cur, user_id, field_id, barangay_id, ct_id, tech_id,
     catalog_row = cur.fetchone()
     maturity = catalog_row["maturity_days"] if catalog_row and catalog_row["maturity_days"] else (120 if crop == "Palay (Rice)" else 90)
 
-    tasks = [
-        (-14, "pre_planting", "Prepare seedbed and soak seeds"),
-        (-3,  "pre_planting", "Final harrowing and levelling"),
-        (7,   "water",        "Maintain 2-3 cm standing water"),
-        (14,  "fertilizer",   "Basal fertilizer application"),
-        (30,  "fertilizer",   "Top-dress with urea at tillering"),
-        (45,  "water",        "Check irrigation before panicle initiation"),
-        (maturity - 14, "other", "Drain the field ahead of harvest"),
-        (maturity, "other",   "Harvest and thresh"),
-    ]
-    if crop != "Palay (Rice)" or technique != "Transplanting (Pindot)":
-        tasks = [t for t in tasks if t[2] != "Prepare seedbed and soak seeds"]
+    tasks = generate_activities(
+        crop, planting_date, maturity, technique, with_weather=False,
+    )
     today = dt.date.today()
-    for offset, task_type, text in tasks:
-        due = planting_date + dt.timedelta(days=offset)
+    for activity in tasks:
+        due, end_date, task_type, text = activity["due_date"], activity["end_date"], activity["task_type"], activity["text"]
         cur.execute(
             """
             INSERT INTO yieldshield.crop_task
-                (user_id, input_log_id, task_type, text, due_date, done, auto_generated)
-            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+                (user_id, input_log_id, task_type, text, due_date, end_date, done, auto_generated, text_key, note_key, note_rainfall_mm)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s)
             """,
-            (user_id, input_log_id, task_type, text, due, due < today),
+            (
+                user_id, input_log_id, task_type, text, due, end_date, due < today,
+                activity["text_key"], activity["note_key"], activity["note_rainfall_mm"],
+            ),
         )
     return input_log_id
 
@@ -759,11 +774,17 @@ def build_field_for_crop(cur, uid, barangay, bid, palay_id, corn_id, model_id,
         # Crop-initial in the plot code (P/C) — this farmer now has two
         # fields for the same barangay/season, so the old code (barangay
         # + season + user id alone) would collide between them.
+        #
+        # plot_name (migration 27) is the separate, human-readable label —
+        # seeded here so existing demo data actually exercises the new
+        # "Cropping name" field instead of leaving it NULL everywhere.
+        season_label = {"WS25": "Wet Season 2025", "DS2526": "Dry Season 2025-2026", "WS26": "Wet Season 2026"}[season]
         make_cropping(
             cur, uid, field_id, bid, ct_id, tech_id, crop, facts, area,
             f"{barangay[:3].upper()}-{crop[0]}-{season}-{uid}", planting,
             ecosystem, seed_type, variety, model_id, predicted_yield,
             confidence, actual_yield, harvest_date,
+            plot_name=f"{barangay} {crop} \u2013 {season_label}",
         )
 
 

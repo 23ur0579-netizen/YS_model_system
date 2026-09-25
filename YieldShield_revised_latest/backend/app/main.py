@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import close_pool, init_pool
-from .routers import announcements, audit, auth, crop_varieties, farm_input, farms, fields, notifications, push, registrations, reports, seed_distribution, tasks, users, weather
+from .routers import announcements, audit, auth, crop_varieties, farm_input, farms, fields, model_admin, notifications, push, registrations, reports, seed_distribution, tasks, users, weather
 
 logging.basicConfig(level=logging.INFO)
 
@@ -43,6 +43,7 @@ app.include_router(push.router)
 app.include_router(reports.router)
 app.include_router(seed_distribution.router)
 app.include_router(crop_varieties.router)
+app.include_router(model_admin.router)
 
 
 @app.on_event("startup")

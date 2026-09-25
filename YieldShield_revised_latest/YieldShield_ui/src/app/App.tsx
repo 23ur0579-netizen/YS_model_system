@@ -14,6 +14,7 @@ import { Profile } from "./components/Profile";
 import { Notifications } from "./components/Notifications";
 import { Simulation } from "./components/Simulation";
 import { AuditLog } from "./components/AuditLog";
+import { ModelAdmin } from "./components/ModelAdmin";
 import { Login } from "./components/Login";
 import { StoreProvider, useStore, View } from "./store";
 import { useT } from "./i18n";
@@ -24,7 +25,7 @@ import { useState, useEffect } from "react";
 // meta.<view>.subtitle) so the Topbar header translates with the rest
 // of the app instead of staying pinned to English.
 function useMeta(t: (k: string) => string): Record<View, { title: string; subtitle: string }> {
-  const views: View[] = ["dashboard", "yield", "recommend", "planning", "myfarm", "calendar", "users", "farms", "settings", "notifications", "simulation", "audit", "profile", "seeddist"];
+  const views: View[] = ["dashboard", "yield", "recommend", "planning", "myfarm", "calendar", "users", "farms", "settings", "notifications", "simulation", "audit", "profile", "seeddist", "model"];
   return Object.fromEntries(views.map((v) => [v, { title: t(`meta.${v}.title`), subtitle: t(`meta.${v}.subtitle`) }])) as Record<View, { title: string; subtitle: string }>;
 }
 
@@ -67,6 +68,7 @@ function Shell() {
           {view === "notifications" && <Notifications />}
           {view === "simulation"    && <Simulation />}
           {view === "audit"         && <AuditLog />}
+          {view === "model"         && <ModelAdmin />}
         </div>
       </main>
     </div>

@@ -142,7 +142,7 @@ export function ImageCropper({
     : { display: "none" };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
           <span className="text-slate-900">{title}</span>
