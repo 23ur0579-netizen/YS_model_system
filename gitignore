@@ -1,0 +1,18 @@
+# Secrets — never commit (use backend/.env.example as the template)
+.env
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / build output
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
