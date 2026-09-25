@@ -50,38 +50,32 @@ def _to_out(row) -> NotificationOut:
     )
 
 
-def _weather_advisory(today: dt.date) -> NotificationOut | None:
+def _daily_weather_forecast(today: dt.date) -> NotificationOut | None:
+    """A weather notification every day, not just when it's severe —
+    light/moderate rain still gets a (calmer-worded) notification, so
+    this reads as a routine daily forecast rather than only ever
+    showing up as an alarm. Uses today's own forecast specifically
+    (not "whichever of today/tomorrow is worse", like the old
+    heavy-rain-only version did), since a genuinely daily notification
+    should be about today."""
     try:
-        forecasts = [get_weather_for_date(today), get_weather_for_date(today + dt.timedelta(days=1))]
+        w = get_weather_for_date(today)
     except RuntimeError:
-        # Weather service unreachable — skip the advisory rather than
-        # failing the whole notifications list over it.
+        # Weather service unreachable — skip rather than failing the
+        # whole notifications list over it.
         return None
 
-    worst = max(forecasts, key=lambda w: w.rainfall_mm)
-    level, label, advice = rainfall_category(worst.rainfall_mm)
-    if worst.rainfall_mm < 15:  # below PAGASA's "Heavy rain" floor — no advisory needed
-        return None
-
-    # A calendar date instead of the word "today"/"tomorrow" — sidesteps
-    # needing yet another translated word, and is just as clear in any
-    # language.
-    when_date = today if worst is forecasts[0] else today + dt.timedelta(days=1)
+    level, label, advice = rainfall_category(w.rainfall_mm)
     params = {
-        "rainfall": round(worst.rainfall_mm),
-        "temperature": round(worst.temperature_c, 1),
-        # Built manually, not strftime("%-d") — that "no leading zero"
-        # flag is a Linux/macOS-only glibc extension and raises
-        # ValueError on Windows Python (this project's backend has run
-        # on both).
-        "date": f"{when_date.strftime('%b')} {when_date.day}",
+        "rainfall": round(w.rainfall_mm),
+        "temperature": round(w.temperature_c, 1),
     }
     return NotificationOut(
         id=f"weather-{today.isoformat()}",
-        title=f"{label} advisory",
+        title=f"Today's forecast: {label.lower()}",
         body=(
-            f"Binalonan is expecting {label.lower()} (~{worst.rainfall_mm:.0f}mm) on {params['date']} "
-            f"({worst.temperature_c:.1f}\u00b0C). {advice}"
+            f"Binalonan is expecting {label.lower()} today (~{w.rainfall_mm:.0f}mm), {w.temperature_c:.1f}\u00b0C."
+            + (f" {advice}" if advice else "")
         ),
         titleKey=f"notif.weather.{level}Title",
         bodyKey=f"notif.weather.{level}Body",
@@ -224,7 +218,7 @@ def list_notifications(user: CurrentUser = Depends(get_current_user)):
             variety = _variety_advisory(cur, user, dt.date.today()) if is_farmer else None
 
     out = [_to_out(r) for r in rows]
-    advisory = _weather_advisory(dt.date.today())
+    advisory = _daily_weather_forecast(dt.date.today())
     if advisory is not None:
         out.insert(0, advisory)
     # Only for farmers/technicians actually deciding what to plant —
